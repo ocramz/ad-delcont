@@ -52,11 +52,22 @@ modify r f = AD $ lift $ modifySTRef' r f
 new :: a -> AD s r (STRef s a)
 new x = AD $ lift $ newSTRef x
 
-newtype DRef s a = DRef (STRef s (D a))
+-- ST references in the AD monad
+newtype DRef s a = DRef { getDRef :: AD s a (STRef s a) }
+
+-- lifting pure functions? (a -> a) -> DRef s a -> DRef s a
+
+-- -- withDRef1 :: (a -> a) -> DRef s a -> AD s a ()
+-- withDRef1 f (DRef act) = do
+--   ref <- act
+--   x <- read ref
+--   let y = f x
+--   write ref y
+
 
 -- from https://www.cs.purdue.edu/homes/rompf/papers/wang-icfp19.pdf
-plusD :: Num a =>
-         STRef s (D a) -> STRef s (D a) -> AD s (D a) (STRef s (D a))
+plusD :: Num t =>
+         STRef s (D t) -> STRef s (D t) -> AD s (D t) (STRef s (D t))
 plusD this that = AD $ do
   dd1@(D x0 _) <- lift $ readSTRef this
   dd2@(D x1 _) <- lift $ readSTRef that
@@ -64,16 +75,29 @@ plusD this that = AD $ do
     -- allocate temp variable
     y <- newSTRef $ D (x0 + x1) 0
     -- apply continuation
-    (D _ y2) <- k y
+    (D _ yd) <- k y
     -- this.d += y.d;
-    modifySTRef' this (withD (+ y2))
+    modifySTRef' this (withD (+ yd))
     -- that.d += y.d
-    modifySTRef' that (withD (+ y2))
+    modifySTRef' that (withD (+ yd))
     pure $ dd1 + dd2
 
+timesD :: Num t =>
+          STRef s (D t) -> STRef s (D t) -> AD s (D t) (STRef s (D t))
+timesD this that = AD $ do
+  dd1@(D x0 _) <- lift $ readSTRef this
+  dd2@(D x1 _) <- lift $ readSTRef that
+  shiftT $ \k -> lift $ do
+    -- allocate temp variable
+    y <- newSTRef $ D (x0 + x1) 0
+    -- apply continuation
+    (D _ yd) <- k y
+    -- this.d += that.x * y.d
+    modifySTRef' this (withD (+ (x1 * yd)))
+    -- that.d +=this.x*y.d
+    modifySTRef' this (withD (+ (x0 * yd)))
+    pure $ dd1 * dd2
 
--- grad :: Num a => (a -> a) -> a -> AD s r (D a)
--- grad :: Num a => (a -> a) -> a -> D a
 grad f x = runAD $ AD $ do
   z <- lift $ newSTRef $ D x 0
   -- reset  { f(z).d = 1.0 }
@@ -82,17 +106,3 @@ grad f x = runAD $ AD $ do
   --   z <- lift $ readSTRef zref
   lift $ readSTRef z
 
-
-
--- shiftT :: Monad m => ((a -> m r) -> ContT r m r) -> ContT r m a
-
--- shiftAD inner = AD $ shiftT $ \k -> do
---   y <- runAD inner
---   y' <- lift $ k y
---   pure y'
-
-
--- plusD (D x0 d0) (D x1 d1) = do
---   shift $ \ k ->
---     let y = D (x0 + x1) 0
---     in k y
