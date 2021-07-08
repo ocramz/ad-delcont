@@ -2,11 +2,13 @@
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE RankNTypes #-}
+{-# language ScopedTypeVariables #-}
 {-# OPTIONS_GHC -Wno-unused-imports #-}
 module Numeric.AD.DelCont where
 
 import Control.Monad.ST (ST, runST)
 import Data.Bifunctor (Bifunctor(..))
+import Data.Foldable (Foldable(..))
 import Data.STRef (STRef, newSTRef, readSTRef, writeSTRef, modifySTRef')
 
 -- transformers
@@ -144,7 +146,47 @@ plus = binOp (\a b -> (a + b, (+)))
 instance (Num a, Num b) => Num (AD s (D a b) (D a b)) where
   (+) = plus
 
--- -- | Sum
+
+
+
+-- bla :: (Monad m, Num a) => (a -> m b) -> m b
+bla :: ContT r m Integer
+bla = ContT $ \k -> do
+  let
+    a = 1 + 2
+  k a
+
+-- type RAD s a da = AD s (D a da) (DVar s a da)
+type RAD s a da = AD s (D a da) (D a da)
+
+rad1 :: (Num da) => (forall s. RAD s a da -> RAD s a da) -> a -> D a da
+rad1 f x = evalAD $ do
+  let z = pure (D x 0)
+  --   -- reset  { f(z).d = 1.0 }
+  -- z'@(D _ d) <- resetT $ f z  -- FIXME f(z).d starts from 1.0
+  z' <- resetT (
+    withD (const 1) <$> f z
+    )
+  pure z'
+
+-- rad :: (Num da) => (forall s . AD s [D a da] (D a da) -> RAD s a da) -> [a] -> [D a da]
+-- rad f xs = evalAD $ do
+--   let
+--     xsl = toList xs
+--     n = length xs
+--     -- zs :: forall s. AD s (D a da) [D a da] --
+--     zs = pure $ zipWith D xsl $ replicate n 0
+--   resetT $ f zs
+
+
+
+
+
+
+-- --
+
+
+ -- -- | Sum
 -- --
 -- -- from https://www.cs.purdue.edu/homes/rompf/papers/wang-icfp19.pdf
 -- plusD :: Num t =>
@@ -178,38 +220,7 @@ instance (Num a, Num b) => Num (AD s (D a b) (D a b)) where
 --     modifySTRef' this (withD (+ (x1 * yd)))
 --     -- that.d +=this.x*y.d
 --     modifySTRef' this (withD (+ (x0 * yd)))
---     pure $ dd1 * dd2
-
-
--- bla :: (Monad m, Num a) => (a -> m b) -> m b
-bla :: ContT r m Integer
-bla = ContT $ \k -> do
-  let
-    a = 1 + 2
-  k a
-
--- type RAD s a da = AD s (D a da) (DVar s a da)
-type RAD s a da = AD s (D a da) (D a da)
-
-rad :: (Num da) => (forall s. RAD s a da -> RAD s a da) -> a -> D a da
-rad f x = evalAD $ do
-  let z = pure (D x 0)
-  z'@(D _ d) <- resetT $ f z
-  pure z'
-
--- grad :: Num a => (a -> a) -> a -> D a
--- grad f x = runAD $ AD $ do
---   z <- lift $ newSTRef $ D x 0
---   -- reset  { f(z).d = 1.0 }
---   resetT $ lift $ modifySTRef' z (withD (const 1) . withX f) -- FIXME update is not pure
---   -- resetT $ \ ioa -> do
---   --   x <- ioa
---   --   f x
---   lift $ readSTRef z
-
-
-
--- --
+--     pure $ dd1 * dd2 
 
 -- read :: STRef s a -> AD s r a
 -- read r = AD $ lift $ readSTRef r
