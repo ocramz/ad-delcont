@@ -1,5 +1,9 @@
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE RankNTypes #-}
 {-# language ScopedTypeVariables #-}
@@ -17,6 +21,16 @@ import Control.Monad.Trans.Cont (Cont, shift, reset, evalCont, ContT(..), shiftT
 
 import Prelude hiding (read)
 
+-- product type (simplified version of vinyl's Rec)
+data Rec :: [*] -> * where
+  RNil :: Rec '[]
+  (:*) :: !r -> !(Rec rs) -> Rec (r ': rs)
+
+-- simplified version of Op from backprop
+--
+-- rather than functions, here we need to keep track of one STRef per operand
+newtype Op as a = Op { runOpWith :: Rec as -> (a, a -> Rec as)}
+
 -- differentiable variable
 newtype DVar s a da = DVar { unDVar :: STRef s (D a da) } deriving (Eq)
 
@@ -25,7 +39,9 @@ var :: Num da => a -> ST s (DVar s a da)
 var x = DVar <$> newSTRef (D x 0)
 
 -- | Dual numbers
-data D a da = D a da deriving (Show)
+data D a da = D a da deriving (Show, Functor)
+-- instance Applicative (D a) where -- need (Monoid a) -- (?)
+-- --   (D a f) <*> (D b x) =
 instance Bifunctor D where
   bimap f g (D a b) = D (f a) (g b)
 
@@ -39,25 +55,12 @@ instance Eq a => Eq (D a da) where
 instance Ord a => Ord (D a db) where
   compare (D x _) (D y _) = compare x y
 
--- | from http://conway.rutgers.edu/~ccshan/wiki/blog/posts/Differentiation/
-instance (Num a) => Num (D a a) where
-  D x x' + D y y' = D (x + y) (x' + y')
-  D x x' * D y y' = D (x * y) (x' * y + x * y')
-  negate (D x x') = D (negate x) (negate x')
-  abs    (D x x') = D (abs x) (signum x * x')
-  signum (D x _)  = D (signum x) 0
-  fromInteger x   = D (fromInteger x) 0
-
-instance Fractional a => Fractional (D a a) where
-  recip (D x x') = D (recip x) (-x'/x/x)
-  fromRational x = D (fromRational x) 0
-
 type AD s r a = ContT r (ST s) a --  deriving (Functor, Applicative, Monad)
 evalAD :: (forall s . AD s a a) -> a
 evalAD go = runST (evalContT go)
 
--- runAD :: (forall s . AD s (D a da) (DVar s a da)) -> D a da --
--- runAD go = runST $ (runContT) go (readSTRef . unDVar)
+runAD :: (forall s . AD s (D a da) (DVar s a da)) -> D a da --
+runAD go = runST $ runContT go (readSTRef . unDVar)
 
 
 
@@ -83,10 +86,10 @@ class NumR(valx: Double,vard: Double) {
 -- | An alternative implementation to unOp
 --
 -- in this case we pass DVar's ar
-unOp' :: Num da1 =>
-         (a1 -> (a2, t -> da2 -> da2))
-      -> ContT (D a3 t) (ST s) (DVar s a1 da2)
-      -> ContT (D a3 t) (ST s) (DVar s a2 da1)
+-- unOp' :: Num da1 =>
+--          (a1 -> (a2, t -> da2 -> da2))
+--       -> ContT (D a3 t) (ST s) (DVar s a1 da2)
+--       -> ContT (D a3 t) (ST s) (DVar s a2 da1)
 unOp' f ioa = do
   (DVar ra) <- ioa
   (D xa _) <- lift $ readSTRef ra
@@ -96,7 +99,7 @@ unOp' f ioa = do
     y'@(D _ yd) <- k y
     modifySTRef' ra (withD (g yd))
     pure y'
-  pure rc
+  pure (rc) -- , DVar ra)
 
 unOp :: Num da1 =>
         (a1 -> (a2, t -> da2 -> da2)) -- ^ (forward result, adjoint update)
@@ -109,7 +112,7 @@ unOp f ioa = do
   rc <- shiftT $ \ k -> lift $ do
     y <- newSTRef (D xw 0)
     y'@(D _ yd) <- k y
-    modifySTRef' ra (withD (g yd))
+    modifySTRef' ra (withD (g yd)) -- FIXME what happens to ra after this line?
     pure y'
   lift $ readSTRef rc
 
@@ -149,25 +152,20 @@ instance (Num a, Num b) => Num (AD s (D a b) (D a b)) where
 
 
 
--- bla :: (Monad m, Num a) => (a -> m b) -> m b
-bla :: ContT r m Integer
-bla = ContT $ \k -> do
-  let
-    a = 1 + 2
-  k a
-
 -- type RAD s a da = AD s (D a da) (DVar s a da)
 type RAD s a da = AD s (D a da) (D a da)
 
 rad1 :: (Num da) => (forall s. RAD s a da -> RAD s a da) -> a -> D a da
 rad1 f x = evalAD $ do
   let z = pure (D x 0)
-  --   -- reset  { f(z).d = 1.0 }
-  -- z'@(D _ d) <- resetT $ f z  -- FIXME f(z).d starts from 1.0
+  -- z' <- resetT $ f z
   z' <- resetT (
-    withD (const 1) <$> f z
+    withD (const 1) <$> f z -- reset  { f(z).d = 1.0 }
     )
   pure z'
+
+-- rad2 f x y = evalAD $ do
+
 
 -- rad :: (Num da) => (forall s . AD s [D a da] (D a da) -> RAD s a da) -> [a] -> [D a da]
 -- rad f xs = evalAD $ do
@@ -184,6 +182,20 @@ rad1 f x = evalAD $ do
 
 
 -- --
+
+
+-- -- | from http://conway.rutgers.edu/~ccshan/wiki/blog/posts/Differentiation/
+-- instance (Num a) => Num (D a a) where
+--   D x x' + D y y' = D (x + y) (x' + y')
+--   D x x' * D y y' = D (x * y) (x' * y + x * y')
+--   negate (D x x') = D (negate x) (negate x')
+--   abs    (D x x') = D (abs x) (signum x * x')
+--   signum (D x _)  = D (signum x) 0
+--   fromInteger x   = D (fromInteger x) 0
+
+-- instance Fractional a => Fractional (D a a) where
+--   recip (D x x') = D (recip x) (-x'/x/x)
+--   fromRational x = D (fromRational x) 0
 
 
  -- -- | Sum
