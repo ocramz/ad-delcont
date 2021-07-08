@@ -16,7 +16,7 @@ import Control.Monad.Trans.Cont (Cont, shift, reset, evalCont, ContT(..), shiftT
 import Prelude hiding (read)
 
 -- differentiable variable
-newtype DVar s a da = DVar { unDVar :: STRef s (D a da) }
+newtype DVar s a da = DVar { unDVar :: STRef s (D a da) } deriving (Eq)
 
 -- | Introduce a fresh DVar
 var :: Num da => a -> ST s (DVar s a da)
@@ -50,32 +50,37 @@ instance Fractional a => Fractional (D a a) where
   recip (D x x') = D (recip x) (-x'/x/x)
   fromRational x = D (fromRational x) 0
 
-newtype AD s r a = AD { unAD ::  ContT r (ST s) a } deriving (Functor, Applicative, Monad)
+type AD s r a = ContT r (ST s) a --  deriving (Functor, Applicative, Monad)
 evalAD :: (forall s . AD s a a) -> a
-evalAD go = runST (evalContT $ unAD go)
+evalAD go = runST (evalContT go)
 
-runAD :: (forall s . AD s (D a da) (DVar s a da)) -> D a da
-runAD go = runST $ (runContT . unAD) go (readSTRef . unDVar)
+-- runAD :: (forall s . AD s (D a da) (DVar s a da)) -> D a da --
+-- runAD go = runST $ (runContT) go (readSTRef . unDVar)
 
 
 
 {-| https://papers.nips.cc/paper/2018/file/34e157766f31db3d2099831d348a7933-Paper.pdf
+https://www.cs.purdue.edu/homes/rompf/papers/wang-icfp19.pdf
 
 class NumR(valx: Double,vard: Double) {
+
   def + (that: NumR) = shift {(k:NumR=>Unit) =>
     val y = new NumR(x + that.x, 0.0);
     k(y);
     this.d += y.d;
     that.d += y.d}
+
   def * (that: NumR) = shift {(k:NumR=>Unit)=>
-    val y = new NumR(x*that.x, 0.0);
+    val y = new NumR(x * that.x, 0.0);
     k(y)
-    this.d += that.x*y.d;
-    that.d +=this.x*y.d
+    this.d += that.x * y.d;
+    that.d += this.x * y.d
   }}
 -}
 
--- alternative implementation to unOp, passing DVar's
+-- | An alternative implementation to unOp
+--
+-- in this case we pass DVar's ar
 unOp' :: Num da1 =>
          (a1 -> (a2, t -> da2 -> da2))
       -> ContT (D a3 t) (ST s) (DVar s a1 da2)
@@ -95,7 +100,7 @@ unOp :: Num da1 =>
         (a1 -> (a2, t -> da2 -> da2)) -- ^ (forward result, adjoint update)
      -> AD s (D a3 t) (D a1 da2)
      -> AD s (D a3 t) (D a2 da1)
-unOp f (AD ioa) = AD $ do
+unOp f ioa = do
   a@(D xa _) <- ioa
   let (xw, g) = f xa
   ra <- lift $ newSTRef a
@@ -107,12 +112,14 @@ unOp f (AD ioa) = AD $ do
   lift $ readSTRef rc
 
 -- | Will this work?
+-- --
+-- -- adapted from https://www.cs.purdue.edu/homes/rompf/papers/wang-icfp19.pdf
 binOp :: Num da1 =>
          (a1 -> a2 -> (a3, t -> da2 -> da2)) -- ^ (forward result, adjoint update)
       -> AD s (D a4 t) (D a1 da2)
       -> AD s (D a4 t) (D a2 da2)
       -> AD s (D a4 t) (D a3 da1)
-binOp f (AD ioa) (AD iob) = AD $ do
+binOp f ioa iob = do
   a@(D xa _) <- ioa
   b@(D xb _) <- iob
   let (xw, g) = f xa xb
@@ -181,12 +188,14 @@ bla = ContT $ \k -> do
     a = 1 + 2
   k a
 
-type RAD s a da = AD s (D a da) (DVar s a da)
+-- type RAD s a da = AD s (D a da) (DVar s a da)
+type RAD s a da = AD s (D a da) (D a da)
 
--- grad :: (forall s . RAD s a da -> RAD s a da) -> a -> (D a da)
--- grad f x = runAD $ AD $ do
---   let z = lift $ var x
---   resetT $ f z
+rad :: (Num da) => (forall s. RAD s a da -> RAD s a da) -> a -> D a da
+rad f x = evalAD $ do
+  let z = pure (D x 0)
+  z'@(D _ d) <- resetT $ f z
+  pure z'
 
 -- grad :: Num a => (a -> a) -> a -> D a
 -- grad f x = runAD $ AD $ do
