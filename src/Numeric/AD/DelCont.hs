@@ -1,3 +1,5 @@
+{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE DataKinds #-}
@@ -24,19 +26,30 @@ import Prelude hiding (read)
 -- product type (simplified version of vinyl's Rec)
 data Rec :: [*] -> * where
   RNil :: Rec '[]
-  (:*) :: !r -> !(Rec rs) -> Rec (r ': rs)
+  (:*) :: !a -> !(Rec as) -> Rec (a ': as)
 
--- simplified version of Op from backprop
---
--- rather than functions, here we need to keep track of one STRef per operand
-newtype Op as a = Op { runOpWith :: Rec as -> (a, a -> Rec as)}
+data ARec s as where
+  ARNil :: ARec s '[]
+  (:&) :: ContT a (ST s) a -> ARec s as -> ARec s (a ': as)
+
+newtype Op s as a = Op { runOpWith :: ARec s as -> (a, a -> ARec s as)}
+
+-- -- simplified version of Op from backprop
+-- --
+-- -- rather than functions, here we need to keep track of one STRef per operand
+-- newtype Op as a = Op { runOpWith :: Rec as -> (a, a -> Rec as)}
+
+-- op1 :: (a -> (b, b -> a))
+--     -> Op '[a] b
+-- op1 f = Op $ \(x :* RNil) -> let (y, dx) = f x
+--                              in (y, \(!d) -> (dx d :* RNil))
 
 -- differentiable variable
-newtype DVar s a da = DVar { unDVar :: STRef s (D a da) } deriving (Eq)
+type DVar s a da = STRef s (D a da)
 
 -- | Introduce a fresh DVar
 var :: Num da => a -> ST s (DVar s a da)
-var x = DVar <$> newSTRef (D x 0)
+var x = newSTRef (D x 0)
 
 -- | Dual numbers
 data D a da = D a da deriving (Show, Functor)
@@ -55,12 +68,11 @@ instance Eq a => Eq (D a da) where
 instance Ord a => Ord (D a db) where
   compare (D x _) (D y _) = compare x y
 
-type AD s r a = ContT r (ST s) a --  deriving (Functor, Applicative, Monad)
+type AD s r a = ContT r (ST s) a -- (Functor, Applicative, Monad)
 evalAD :: (forall s . AD s a a) -> a
 evalAD go = runST (evalContT go)
-
-runAD :: (forall s . AD s (D a da) (DVar s a da)) -> D a da --
-runAD go = runST $ runContT go (readSTRef . unDVar)
+-- runAD :: (forall s . AD s (D a da) (DVar s a da)) -> D a da --
+-- runAD go = runST $ runContT go (readSTRef . unDVar)
 
 
 
@@ -83,23 +95,26 @@ class NumR(valx: Double,vard: Double) {
   }}
 -}
 
--- | An alternative implementation to unOp
---
--- in this case we pass DVar's ar
+-- type RAD2 s a da = ContT (DVar s a da) (ST s) (DVar s a da) -- ?
+
+-- -- | An alternative implementation to unOp
+-- --
+-- -- in this case we pass DVar's around (?)
 -- unOp' :: Num da1 =>
---          (a1 -> (a2, t -> da2 -> da2))
---       -> ContT (D a3 t) (ST s) (DVar s a1 da2)
---       -> ContT (D a3 t) (ST s) (DVar s a2 da1)
+--          (t1 -> (a1, t2 -> da2 -> da2))
+--       -> ContT (DVar s a2 t2) (ST s) (DVar s t1 da2)
+--       -> ContT (DVar s a2 t2) (ST s) (DVar s a1 da1)
 unOp' f ioa = do
-  (DVar ra) <- ioa
+  ra <- ioa
   (D xa _) <- lift $ readSTRef ra
   let (xw, g) = f xa
   rc <- shiftT $ \ k -> lift $ do
     y <- var xw
-    y'@(D _ yd) <- k y
+    y' <- k y
+    (D _ yd) <- readSTRef y'
     modifySTRef' ra (withD (g yd))
     pure y'
-  pure (rc) -- , DVar ra)
+  pure (readSTRef rc, (ra))
 
 unOp :: Num da1 =>
         (a1 -> (a2, t -> da2 -> da2)) -- ^ (forward result, adjoint update)
@@ -184,6 +199,8 @@ rad1 f x = evalAD $ do
 -- --
 
 
+
+
 -- -- | from http://conway.rutgers.edu/~ccshan/wiki/blog/posts/Differentiation/
 -- instance (Num a) => Num (D a a) where
 --   D x x' + D y y' = D (x + y) (x' + y')
@@ -242,3 +259,6 @@ rad1 f x = evalAD $ do
 -- modify r f = AD $ lift $ modifySTRef' r f
 -- new :: a -> AD s r (STRef s a)
 -- new x = AD $ lift $ newSTRef x
+
+
+
