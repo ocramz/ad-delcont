@@ -16,6 +16,7 @@ module Numeric.AD.DelCont where
 import Control.Monad.ST (ST, runST)
 import Data.Bifunctor (Bifunctor(..))
 import Data.Foldable (Foldable(..))
+import Data.Functor (void)
 import Data.STRef (STRef, newSTRef, readSTRef, writeSTRef, modifySTRef')
 
 -- transformers
@@ -101,45 +102,52 @@ class NumR(valx: Double,vard: Double) {
     this.d += that.x * y.d;
     that.d += this.x * y.d
   }}
+
+def grad(f: NumR => NumR )(x: Double) = {
+  val z = new NumR(x, 0.0)
+  reset { f(z).d = 1.0 }
+  z.d
+  }
 -}
 
 -- | An alternative implementation to unOp
 --
 -- in this case we pass DVar's around (?)
 op1 :: Num b =>
-       (a -> (b, b -> a -> a)) -- ^ (result, sensitivity)
+       (a -> (b
+            , b -> a -> a)) -- ^ (result, sensitivity)
     -> Op s '[a] b
 op1 f = Op $ \(ra :& SDNil) -> do
   (D xa _) <- lift $ readSTRef ra
   let (xb, g) = f xa
-  ry <- shiftT $ \ k -> lift $ do
+  void $ shiftT $ \ k -> lift $ do
     rb <- var xb
     ry <- k rb -- continuation
     (D _ yd) <- readSTRef ry
     modifySTRef' ra (withD (g yd))
     pure ry
-  pure (ry, ra :& SDNil)
+  pure (xb, ra :& SDNil)
 
 op2 :: Num c =>
        (a -> b -> (c
-                  , c -> b -> a -> a
-                  , c -> a -> b -> b))
+                 , c -> a -> a
+                 , c -> b -> b))
     -> Op s '[a, b] c
 op2 f = Op $ \(ra :& (rb :& SDNil)) -> do
   (D xa _) <- lift $ readSTRef ra
   (D xb _) <- lift $ readSTRef rb
   let (xc, ga, gb) = f xa xb
-  ry <- shiftT $ \ k -> lift $ do
+  void $ shiftT $ \ k -> lift $ do
     rc <- var xc
     ry <- k rc
     (D _ yd) <- readSTRef ry
-    modifySTRef' ra (withD (ga yd xb))
-    modifySTRef' rb (withD (gb yd xa))
+    modifySTRef' ra (withD (ga yd))
+    modifySTRef' rb (withD (gb yd))
     pure ry
-  pure (ry, ra :& (rb :& SDNil))
+  pure (xc, ra :& (rb :& SDNil))
 
 newtype Op s as b = Op {
-  runOpWith :: SDRec s as -> ContT (DVar s b b) (ST s) (DVar s b b, SDRec s as)
+  runOpWith :: SDRec s as -> ContT (DVar s b b) (ST s) (b, SDRec s as)
       }
 
 type Op1 s a b = Op s '[a] b
