@@ -146,9 +146,29 @@ op2 f = Op $ \(ra :& (rb :& SDNil)) -> do
     pure ry
   pure (xc, ra :& (rb :& SDNil))
 
+-- an intermediate abstraction, inspired by 'backprop'. Simplifies the type signatures but I'm not sure it's relevant here.
 newtype Op s as b = Op {
   runOpWith :: SDRec s as -> ContT (DVar s b b) (ST s) (b, SDRec s as)
       }
+
+type AD2 s as b = ContT (SDRec s as) (ST s) (b, SDRec s as)
+
+-- liftOp1 :: Op s '[a1] a2
+--         -> ContT (DVar s a2 a2) (ST s) (DVar s a1 a1)
+--         -> ContT (DVar s a2 a2) (ST s) (SDRec s '[a1])
+-- liftOp1 (Op opf) io = do
+--   x <- io
+--   snd <$> opf (x :& SDNil)
+
+-- liftOp2 :: Op s '[a1, a2] a3
+--         -> ContT (DVar s a3 a3) (ST s) (DVar s a1 a1)
+--         -> ContT (DVar s a3 a3) (ST s) (DVar s a2 a2)
+--         -> ContT (DVar s a3 a3) (ST s) (SDRec s '[a1, a2])
+-- liftOp2 (Op opf) io1 io2 = do
+--   x1 <- io1
+--   x2 <- io2
+--   let r = x1 :& (x2 :& SDNil)
+--   snd <$> opf r
 
 type Op1 s a b = Op s '[a] b
 type Op2 s a b c = Op s '[a, b] c
