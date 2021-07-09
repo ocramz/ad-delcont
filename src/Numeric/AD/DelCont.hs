@@ -28,11 +28,11 @@ data Rec :: [*] -> * where
   RNil :: Rec '[]
   (:*) :: !a -> !(Rec as) -> Rec (a ': as)
 
-data ARec s as where
-  ARNil :: ARec s '[]
-  (:&) :: ContT a (ST s) a -> ARec s as -> ARec s (a ': as)
+-- data ARec s as where
+--   ARNil :: ARec s '[]
+--   (:&) :: ContT a (ST s) a -> ARec s as -> ARec s (a ': as)
 
-newtype Op s as a = Op { runOpWith :: ARec s as -> (a, a -> ARec s as)}
+-- newtype Op s as a = Op { runOpWith :: ARec s as -> (a, a -> ARec s as)}
 
 -- -- simplified version of Op from backprop
 -- --
@@ -100,21 +100,20 @@ class NumR(valx: Double,vard: Double) {
 -- -- | An alternative implementation to unOp
 -- --
 -- -- in this case we pass DVar's around (?)
--- unOp' :: Num da1 =>
---          (t1 -> (a1, t2 -> da2 -> da2))
---       -> ContT (DVar s a2 t2) (ST s) (DVar s t1 da2)
---       -> ContT (DVar s a2 t2) (ST s) (DVar s a1 da1)
-unOp' f ioa = do
-  ra <- ioa
+unOp' :: Num da1 =>
+         (t1 -> (a1, t2 -> da2 -> da2))
+      -> DVar s t1 da2
+      -> ContT (DVar s a2 t2) (ST s) (DVar s a1 da1, DVar s t1 da2) -- (result, sensitivity)
+unOp' f ra = do
   (D xa _) <- lift $ readSTRef ra
   let (xw, g) = f xa
-  rc <- shiftT $ \ k -> lift $ do
-    y <- var xw
-    y' <- k y
-    (D _ yd) <- readSTRef y'
+  res <- shiftT $ \ k -> lift $ do
+    ry <- var xw
+    ry' <- k ry
+    (D _ yd) <- readSTRef ry'
     modifySTRef' ra (withD (g yd))
-    pure y'
-  pure (readSTRef rc, (ra))
+    pure ry'
+  pure (res, ra)
 
 unOp :: Num da1 =>
         (a1 -> (a2, t -> da2 -> da2)) -- ^ (forward result, adjoint update)
