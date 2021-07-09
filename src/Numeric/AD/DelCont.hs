@@ -120,6 +120,24 @@ op1 f = Op $ \(ra :& SDNil) -> do
     pure ry
   pure (ry, ra :& SDNil)
 
+op2 :: Num c =>
+       (a -> b -> (c
+                  , c -> b -> a -> a
+                  , c -> a -> b -> b))
+    -> Op s '[a, b] c
+op2 f = Op $ \(ra :& (rb :& SDNil)) -> do
+  (D xa _) <- lift $ readSTRef ra
+  (D xb _) <- lift $ readSTRef rb
+  let (xc, ga, gb) = f xa xb
+  ry <- shiftT $ \ k -> lift $ do
+    rc <- var xc
+    ry <- k rc
+    (D _ yd) <- readSTRef ry
+    modifySTRef' ra (withD (ga yd xb))
+    modifySTRef' rb (withD (gb yd xa))
+    pure ry
+  pure (ry, ra :& (rb :& SDNil))
+
 newtype Op s as b = Op {
   runOpWith :: SDRec s as -> ContT (DVar s b b) (ST s) (DVar s b b, SDRec s as)
       }
