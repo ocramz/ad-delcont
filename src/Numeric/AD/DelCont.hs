@@ -9,6 +9,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE RankNTypes #-}
 {-# language ScopedTypeVariables #-}
+{-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-unused-imports #-}
 module Numeric.AD.DelCont where
 
@@ -28,9 +29,10 @@ data Rec :: [*] -> * where
   RNil :: Rec '[]
   (:*) :: !a -> !(Rec as) -> Rec (a ': as)
 
--- data ARec s as where
---   ARNil :: ARec s '[]
---   (:&) :: ContT a (ST s) a -> ARec s as -> ARec s (a ': as)
+data SDRec s as where
+  SDNil :: SDRec s '[]
+  (:&) :: DVar s a a -> !(SDRec s as) -> SDRec s (a ': as)
+
 
 -- newtype Op s as a = Op { runOpWith :: ARec s as -> (a, a -> ARec s as)}
 
@@ -53,6 +55,12 @@ var x = newSTRef (D x 0)
 
 -- | Dual numbers
 data D a da = D a da deriving (Show, Functor)
+
+-- | Dual numbers (alternative take)
+class Diff a where type Adj a :: *
+instance Diff Double where type Adj Double = Double
+data DD a = Dd a (Adj a)
+
 -- instance Applicative (D a) where -- need (Monoid a) -- (?)
 -- --   (D a f) <*> (D b x) =
 instance Bifunctor D where
@@ -95,25 +103,37 @@ class NumR(valx: Double,vard: Double) {
   }}
 -}
 
--- type RAD2 s a da = ContT (DVar s a da) (ST s) (DVar s a da) -- ?
-
--- -- | An alternative implementation to unOp
--- --
--- -- in this case we pass DVar's around (?)
-unOp' :: Num da1 =>
-         (t1 -> (a1, t2 -> da2 -> da2))
-      -> DVar s t1 da2
-      -> ContT (DVar s a2 t2) (ST s) (DVar s a1 da1, DVar s t1 da2) -- (result, sensitivity)
-unOp' f ra = do
+-- | An alternative implementation to unOp
+--
+-- in this case we pass DVar's around (?)
+op1 :: Num b =>
+       (a -> (b, b -> a -> a)) -- ^ (result, sensitivity)
+    -> Op s '[a] b
+op1 f = Op $ \(ra :& SDNil) -> do
   (D xa _) <- lift $ readSTRef ra
-  let (xw, g) = f xa
-  res <- shiftT $ \ k -> lift $ do
-    ry <- var xw
-    ry' <- k ry
-    (D _ yd) <- readSTRef ry'
+  let (xb, g) = f xa
+  ry <- shiftT $ \ k -> lift $ do
+    rb <- var xb
+    ry <- k rb -- continuation
+    (D _ yd) <- readSTRef ry
     modifySTRef' ra (withD (g yd))
-    pure ry'
-  pure (res, ra)
+    pure ry
+  pure (ry, ra :& SDNil)
+
+newtype Op s as b = Op {
+  runOpWith :: SDRec s as -> ContT (DVar s b b) (ST s) (DVar s b b, SDRec s as)
+      }
+
+type Op1 s a b = Op s '[a] b
+type Op2 s a b c = Op s '[a, b] c
+
+{- Op composition
+
+(.) :: Op s '[b] c -> Op s '[a] b -> Ops s '[a] c
+-}
+
+-- liftOp1 (ra :& SDNil) = undefined
+
 
 unOp :: Num da1 =>
         (a1 -> (a2, t -> da2 -> da2)) -- ^ (forward result, adjoint update)
