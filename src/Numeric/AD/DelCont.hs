@@ -94,14 +94,16 @@ instance Eq a => Eq (D a da) where
 instance Ord a => Ord (D a db) where
   compare (D x _) (D y _) = compare x y
 
-type AD s r a = ContT r (ST s) a -- (Functor, Applicative, Monad)
-evalAD :: (forall s . AD s a a) -> a
-evalAD go = runST (evalContT go)
--- runAD :: (forall s . AD s (D a da) (DVar s a da)) -> D a da --
--- runAD go = runST $ runContT go (readSTRef . unDVar)
+-- type AD s r a = ContT r (ST s) a -- (Functor, Applicative, Monad)
+-- evalAD :: (forall s . AD s a a) -> a
+-- evalAD go = runST (evalContT go)
 
--- -- alternative AD type for passing STRef's
--- type AD2 s a b = ContT (DVar s b b) (ST s) (DVar s a a)
+type AD s r a da = ContT r (ST s) (DVar s a da)
+
+runAD :: (forall s . AD s (DVar s a da) a da) -> D a da
+runAD go = runST $ runContT go pure >>= readSTRef
+
+
 
 
 
@@ -141,92 +143,79 @@ def grad(f: NumR => NumR )(x: Double) = {
 -- 3) rb will be passed downstream by the continuation k, with the expectation that the STRef will be mutated
 -- 4) upon returning from k (bouncing from the boundary of resetT), the mutated STRef is read back in
 -- 5) adjoint part of the input variable is updated and new input variable is returned.
+
 op1 :: Num db =>
-        (a -> (b, db -> da -> da))
-     -> ContT (DVar s a da) (ST s) (DVar s a da)
-     -> ContT (DVar s a da) (ST s) (DVar s b db)
+       (a -> (b, db -> da -> da))
+    -> AD s r a da
+    -> AD s r b db
 op1 f ioa = do
   ra <- ioa
   (D xa _) <- lift $ readSTRef ra
   let (xb, g) = f xa -- 1)
   shiftT $ \ k -> lift $ do
     rb <- var xb -- 2)
-    void $ k rb -- 3)
+    ry <- k rb -- 3)
     (D _ yd) <- readSTRef rb -- 4)
     modifySTRef' ra (withD (g yd)) -- 5)
-    pure ra
+    pure ry
 
+op2 :: Num dc =>
+       (a -> b -> (c
+                  , dc -> da -> da
+                  , dc -> db -> db))
+    -> AD s r a da
+    -> AD s r b db
+    -> AD s r c dc
+op2 f ioa iob = do
+  ra <- ioa
+  rb <- iob
+  (D xa _) <- lift $ readSTRef ra
+  (D xb _) <- lift $ readSTRef rb
+  let (xc, g, h) = f xa xb
+  shiftT $ \ k -> lift $ do
+    rc <- var xc
+    ry <- k rc
+    (D _ yd) <- readSTRef rc
+    modifySTRef' ra (withD (g yd))
+    modifySTRef' rb (withD (h yd))
+    pure ry
 
+plus :: (Num a, Num da) => AD s r a da -> AD s r a da -> AD s r a da
+plus = op2 (\x y -> (x + y, (+), (+)))
 
-
-
-
-
-
-
-
-unOp :: Num da1 =>
-        (a1 -> (a2, t -> da2 -> da2)) -- ^ (forward result, adjoint update)
-     -> AD s (D a3 t) (D a1 da2)
-     -> AD s (D a3 t) (D a2 da1)
-unOp f ioa = do
-  a@(D xa _) <- ioa
-  let (xw, g) = f xa
-  ra <- lift $ newSTRef a
-  rc <- shiftT $ \ k -> lift $ do
-    y <- newSTRef (D xw 0)
-    y'@(D _ yd) <- k y
-    modifySTRef' ra (withD (g yd)) -- XXX ra is forgotten after this line
-    pure y'
-  lift $ readSTRef rc
-
--- | Will this work?
--- --
--- -- adapted from https://www.cs.purdue.edu/homes/rompf/papers/wang-icfp19.pdf
-binOp :: Num da1 =>
-         (a1 -> a2 -> (a3, t -> da2 -> da2)) -- ^ (forward result, adjoint update)
-      -> AD s (D a4 t) (D a1 da2)
-      -> AD s (D a4 t) (D a2 da2)
-      -> AD s (D a4 t) (D a3 da1)
-binOp f ioa iob = do
-  a@(D xa _) <- ioa
-  b@(D xb _) <- iob
-  let (xw, g) = f xa xb
-  ra <- lift $ newSTRef a
-  rb <- lift $ newSTRef b
-  rc <- shiftT $ \ k -> lift $ do
-    y <- newSTRef (D xw 0)
-    -- apply continuation
-    y'@(D _ yd) <- k y
-    -- modify operands with continuation result
-    modifySTRef' ra (withD (g yd)) -- XXX ra, rb are forgotten after this line
-    modifySTRef' rb (withD (g yd))
-    pure y'
-  lift $ readSTRef rc
-
-plus :: (Num a, Num b) =>
-        AD s (D a b) (D a b)
-     -> AD s (D a b) (D a b)
-     -> AD s (D a b) (D a b)
-plus = binOp (\a b -> (a + b, (+)))
-
-instance (Num a, Num b) => Num (AD s (D a b) (D a b)) where
+instance (Num a, Num da) => Num (AD s r a da) where
   (+) = plus
 
 
+-- | 
+--
+-- >>> rad1 (\x -> x + x) 2
+--
+-- D 2 0   -- FIXME this should evaluate to (D 4 2)
+rad1 :: (Num da) =>
+        (forall s . AD s (DVar s a da) a da -> AD s (DVar s a da) a da) -> a -> D a da
+rad1 f x = runAD $ do
+  let ioa = lift $ var x
+  resetT $ do
+    let
+      iob = f ioa
+    zr <- iob
+    lift $ modifySTRef' zr (withD (const 1))
+    pure zr
+  ioa
 
 
 
-type RAD s a da = AD s (D a da) (D a da)
 
--- univariate RAD
-rad1 :: (Num da) => (forall s. RAD s a da -> RAD s a da) -> a -> D a da
-rad1 f x = evalAD $ do
-  let z = pure (D x 0)
-  z' <- resetT (
-    withD (const 1) <$> f z -- reset  { f(z).d = 1.0 }
-    )
-  pure z'
+
+-- -- univariate RAD
+-- rad1 :: (Num da) => (forall s. RAD s a da -> RAD s a da) -> a -> D a da
+-- rad1 f x = evalAD $ do
+--   let z = pure (D x 0)
+--   z' <- resetT (
+--     withD (const 1) <$> f z -- reset  { f(z).d = 1.0 }
+--     )
+--   pure z'
 
 
 -- -- multivariate RAD
