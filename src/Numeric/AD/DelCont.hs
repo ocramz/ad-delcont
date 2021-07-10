@@ -14,6 +14,7 @@
 module Numeric.AD.DelCont where
 
 import Control.Monad.ST (ST, runST)
+import Control.Monad.IO.Class (MonadIO(..))
 import Data.Bifunctor (Bifunctor(..))
 import Data.Foldable (Foldable(..))
 import Data.Functor (void)
@@ -25,6 +26,26 @@ import Control.Monad.Trans.Cont (Cont, shift, reset, evalCont, ContT(..), shiftT
 
 import Prelude hiding (read)
 
+-- try this to understand what 'shift' and 'reset' do.
+t0 :: IO ()
+t0 = evalContT $ do
+  let say = liftIO . putStrLn
+  resetT $ do
+    say "A"
+    say "B"
+    x <- shiftT $ \k -> do
+      say "C"
+      lift $ k 1
+      y <- shiftT $ \k2 -> do
+        say "D"
+        lift $ k2 2
+      say $ unwords ["k2 :", show y]
+      lift $ k 3
+    say $ unwords ["k :", show x]
+
+
+
+
 -- product type (simplified version of vinyl's Rec)
 data Rec :: [*] -> * where
   RNil :: Rec '[]
@@ -34,8 +55,6 @@ data SDRec s as where
   SDNil :: SDRec s '[]
   (:&) :: DVar s a a -> !(SDRec s as) -> SDRec s (a ': as)
 
-
--- newtype Op s as a = Op { runOpWith :: ARec s as -> (a, a -> ARec s as)}
 
 -- -- simplified version of Op from backprop
 -- --
@@ -57,10 +76,8 @@ var x = newSTRef (D x 0)
 -- | Dual numbers
 data D a da = D a da deriving (Show, Functor)
 
--- | Dual numbers (alternative take)
-class Diff a where type Adj a :: *
-instance Diff Double where type Adj Double = Double
-data DD a = Dd a (Adj a)
+
+
 
 -- instance Applicative (D a) where -- need (Monoid a) -- (?)
 -- --   (D a f) <*> (D b x) =
@@ -83,20 +100,23 @@ evalAD go = runST (evalContT go)
 -- runAD :: (forall s . AD s (D a da) (DVar s a da)) -> D a da --
 -- runAD go = runST $ runContT go (readSTRef . unDVar)
 
+-- -- alternative AD type for passing STRef's
+-- type AD2 s a b = ContT (DVar s b b) (ST s) (DVar s a a)
+
 
 
 {-| https://papers.nips.cc/paper/2018/file/34e157766f31db3d2099831d348a7933-Paper.pdf
 https://www.cs.purdue.edu/homes/rompf/papers/wang-icfp19.pdf
 
-class NumR(valx: Double,vard: Double) {
+class NumR(val x: Double, var d: Double) {
 
-  def + (that: NumR) = shift {(k:NumR=>Unit) =>
+  def + (that: NumR) = shift {(k : NumR => Unit) =>
     val y = new NumR(x + that.x, 0.0);
     k(y);
     this.d += y.d;
     that.d += y.d}
 
-  def * (that: NumR) = shift {(k:NumR=>Unit)=>
+  def * (that: NumR) = shift {(k : NumR => Unit)=>
     val y = new NumR(x * that.x, 0.0);
     k(y)
     this.d += that.x * y.d;
@@ -112,73 +132,37 @@ def grad(f: NumR => NumR )(x: Double) = {
 
 -- | An alternative implementation to unOp
 --
--- in this case we pass DVar's around (?)
-op1 :: Num b =>
-       (a -> (b
-            , b -> a -> a)) -- ^ (result, sensitivity)
-    -> Op s '[a] b
-op1 f = Op $ \(ra :& SDNil) -> do
+-- here we pass DVar's around
+--
+-- HOW DOES THIS WORK :
+--
+-- 1) compute function result and adjoint update
+-- 2) fresh STRef rb with result and 0 adjoint part
+-- 3) rb will be passed downstream by the continuation k, with the expectation that the STRef will be mutated
+-- 4) upon returning from k (bouncing from the boundary of resetT), the mutated STRef is read back in
+-- 5) adjoint part of the input variable is updated and new input variable is returned.
+op1 :: Num db =>
+        (a -> (b, db -> da -> da))
+     -> ContT (DVar s a da) (ST s) (DVar s a da)
+     -> ContT (DVar s a da) (ST s) (DVar s b db)
+op1 f ioa = do
+  ra <- ioa
   (D xa _) <- lift $ readSTRef ra
-  let (xb, g) = f xa
-  void $ shiftT $ \ k -> lift $ do
-    rb <- var xb
-    ry <- k rb -- continuation
-    (D _ yd) <- readSTRef ry
-    modifySTRef' ra (withD (g yd))
-    pure ry
-  pure (xb, ra :& SDNil)
+  let (xb, g) = f xa -- 1)
+  shiftT $ \ k -> lift $ do
+    rb <- var xb -- 2)
+    void $ k rb -- 3)
+    (D _ yd) <- readSTRef rb -- 4)
+    modifySTRef' ra (withD (g yd)) -- 5)
+    pure ra
 
-op2 :: Num c =>
-       (a -> b -> (c
-                 , c -> a -> a
-                 , c -> b -> b))
-    -> Op s '[a, b] c
-op2 f = Op $ \(ra :& (rb :& SDNil)) -> do
-  (D xa _) <- lift $ readSTRef ra
-  (D xb _) <- lift $ readSTRef rb
-  let (xc, ga, gb) = f xa xb
-  void $ shiftT $ \ k -> lift $ do
-    rc <- var xc
-    ry <- k rc
-    (D _ yd) <- readSTRef ry
-    modifySTRef' ra (withD (ga yd))
-    modifySTRef' rb (withD (gb yd))
-    pure ry
-  pure (xc, ra :& (rb :& SDNil))
 
--- an intermediate abstraction, inspired by 'backprop'. Simplifies the type signatures but I'm not sure it's relevant here.
-newtype Op s as b = Op {
-  runOpWith :: SDRec s as -> ContT (DVar s b b) (ST s) (b, SDRec s as)
-      }
 
-type AD2 s as b = ContT (SDRec s as) (ST s) (b, SDRec s as)
 
--- liftOp1 :: Op s '[a1] a2
---         -> ContT (DVar s a2 a2) (ST s) (DVar s a1 a1)
---         -> ContT (DVar s a2 a2) (ST s) (SDRec s '[a1])
--- liftOp1 (Op opf) io = do
---   x <- io
---   snd <$> opf (x :& SDNil)
 
--- liftOp2 :: Op s '[a1, a2] a3
---         -> ContT (DVar s a3 a3) (ST s) (DVar s a1 a1)
---         -> ContT (DVar s a3 a3) (ST s) (DVar s a2 a2)
---         -> ContT (DVar s a3 a3) (ST s) (SDRec s '[a1, a2])
--- liftOp2 (Op opf) io1 io2 = do
---   x1 <- io1
---   x2 <- io2
---   let r = x1 :& (x2 :& SDNil)
---   snd <$> opf r
 
-type Op1 s a b = Op s '[a] b
-type Op2 s a b c = Op s '[a, b] c
 
-{- Op composition
 
-(.) :: Op s '[b] c -> Op s '[a] b -> Ops s '[a] c
--}
-
--- liftOp1 (ra :& SDNil) = undefined
 
 
 unOp :: Num da1 =>
@@ -192,7 +176,7 @@ unOp f ioa = do
   rc <- shiftT $ \ k -> lift $ do
     y <- newSTRef (D xw 0)
     y'@(D _ yd) <- k y
-    modifySTRef' ra (withD (g yd)) -- FIXME what happens to ra after this line?
+    modifySTRef' ra (withD (g yd)) -- XXX ra is forgotten after this line
     pure y'
   lift $ readSTRef rc
 
@@ -215,7 +199,7 @@ binOp f ioa iob = do
     -- apply continuation
     y'@(D _ yd) <- k y
     -- modify operands with continuation result
-    modifySTRef' ra (withD (g yd))
+    modifySTRef' ra (withD (g yd)) -- XXX ra, rb are forgotten after this line
     modifySTRef' rb (withD (g yd))
     pure y'
   lift $ readSTRef rc
@@ -232,22 +216,22 @@ instance (Num a, Num b) => Num (AD s (D a b) (D a b)) where
 
 
 
--- type RAD s a da = AD s (D a da) (DVar s a da)
+
 type RAD s a da = AD s (D a da) (D a da)
 
+-- univariate RAD
 rad1 :: (Num da) => (forall s. RAD s a da -> RAD s a da) -> a -> D a da
 rad1 f x = evalAD $ do
   let z = pure (D x 0)
-  -- z' <- resetT $ f z
   z' <- resetT (
     withD (const 1) <$> f z -- reset  { f(z).d = 1.0 }
     )
   pure z'
 
--- rad2 f x y = evalAD $ do
 
+-- -- multivariate RAD
 
--- rad :: (Num da) => (forall s . AD s [D a da] (D a da) -> RAD s a da) -> [a] -> [D a da]
+-- rad :: (Num da) => (forall s . AD s [D a da] (D a da) -> RAD s a da) -> [a] -> [D a da] -- ?
 -- rad f xs = evalAD $ do
 --   let
 --     xsl = toList xs
@@ -262,6 +246,19 @@ rad1 f x = evalAD $ do
 
 
 -- --
+
+
+-- an intermediate abstraction, inspired by 'backprop'. Simplifies the type signatures but I'm not sure it's relevant here.
+-- newtype Op s as b = Op {
+--   runOpWith :: SDRec s as -> ContT (DVar s b b) (ST s) (b, SDRec s as)
+--       }
+
+-- type Op1 s a b = Op s '[a] b
+-- type Op2 s a b c = Op s '[a, b] c
+
+{- Op composition ?
+(.) :: Op1 s '[b] c -> Op1 s '[a] b -> Op1 s '[a] c
+-}
 
 
 
@@ -326,4 +323,7 @@ rad1 f x = evalAD $ do
 -- new x = AD $ lift $ newSTRef x
 
 
-
+-- -- | Dual numbers DD (alternative take, using a type family for the first variation)
+-- data DD a = Dd a (Adj a)
+-- class Diff a where type Adj a :: *
+-- instance Diff Double where type Adj Double = Double
