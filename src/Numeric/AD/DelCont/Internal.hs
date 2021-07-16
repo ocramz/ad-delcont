@@ -1,3 +1,5 @@
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE LambdaCase #-}
@@ -59,3 +61,41 @@ op1 f ioa = do
     (D _ yd) <- readSTRef rb -- 4)
     modifySTRef' ra (withD (g yd)) -- 5)
     pure ry
+
+op2 f ioa iob = do
+  ra <- ioa
+  rb <- iob
+  (D xa _) <- lift $ readSTRef ra
+  (D xb _) <- lift $ readSTRef rb
+  let (xc, g, h) = f xa xb
+  shiftT $ \ k -> lift $ do
+    rc <- var xc
+    ry <- k rc
+    (D _ yd) <- readSTRef rc
+    modifySTRef' ra (withD (g yd))
+    modifySTRef' rb (withD (h yd))
+    pure ry
+
+plus :: (Num a, Num da) => AD s a da -> AD s a da -> AD s a da
+plus = op2 (\x y -> (x + y, (+), (+)))
+
+op2 :: Num t =>
+       (a1 -> a2 -> (a3, t -> da1 -> da1, t -> da2 -> da2))
+    -> ContT a4 (ST s) (STRef s (D a1 da1))
+    -> ContT a4 (ST s) (STRef s (D a2 da2))
+    -> ContT a4 (ST s) (DVar s a3 t)
+instance (Num a, Num da) => Num (AD s a da) where
+  (+) = plus
+
+rad1 :: (Num da) =>
+        (forall s . AD s a da -> AD s a da) -> a -> da
+rad1 f x = runST $ do
+  ioa <- var x
+  evalContT $ do
+    resetT $ do
+      zr <- f (pure ioa)
+      lift $ modifySTRef' zr (withD (const 1))
+      pure zr
+  (D _ x_bar) <- readSTRef ioa
+  pure x_bar
+
