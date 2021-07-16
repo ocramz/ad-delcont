@@ -58,7 +58,7 @@ t0 = evalContT $ do
 
 
 
-bla :: (Enum a, Monad m) => a -> ContT a (StateT [a] m) a
+bla :: (Enum a) => a -> ContT a (State [a]) a
 bla x = shiftT $ \k -> do
   cons x
   let x' = succ x -- compute something with the input
@@ -70,23 +70,25 @@ bla x = shiftT $ \k -> do
 --
 -- λ> run t1
 -- ('b',"b_a")
-t1 :: (Monad m) => ContT Char (StateT [Char] m) Char
+t1 :: ContT Char (State [Char]) Char
 t1 = resetT $ do
-  let x = 'a'
+  let x = 'a' -- input
   r <- shiftT $ \k -> do
-    cons x
-    let x' = succ x
-    y <- lift $ k x'
-    cons y
+    cons x -- initial state uses the input
+    let x' = succ x -- compute a function of the input
+    y <- lift $ k x' -- delegate to the continuation k
+    cons y -- mutate state with the return value of k
     pure x'
   cons '_'
   pure r
+
+
 
 -- | how does the composition of two ContT 'shift' computations, bracketed by 'reset', behave?
 --
 -- λ> run t3
 -- ('b',"cczba")
-t3 :: (Monad m) => ContT Char (StateT [Char] m) Char
+t3 :: ContT Char (State [Char]) Char
 t3 = resetT $ do
   r1 <- bla 'a'
   r2 <- bla r1
@@ -97,7 +99,7 @@ t3 = resetT $ do
 --
 -- λ> run t4
 -- ('b',"_zcba")
-t4 :: (Monad m) => ContT Char (StateT [Char] m) Char
+t4 :: ContT Char (State [Char]) Char
 t4 = resetT $ do
   r1 <- bla 'a'
   res <- resetT $ do
@@ -108,12 +110,11 @@ t4 = resetT $ do
 
 
 
-run :: Monad m =>
-       ContT b (StateT [a] m) b
-    -> m (b, [a])
-run go  = flip runStateT [] $ evalContT ( go )
+run :: ContT b (State [a]) b
+    -> (b, [a])
+run go  = flip runState [] $ evalContT ( go )
 
-cons :: (MonadTrans t, Monad m) => a -> t (StateT [a] m) ()
+cons :: (MonadTrans t) => a -> t (State [a]) ()
 cons x = lift $ modify (x :)
 
 -- -- --
