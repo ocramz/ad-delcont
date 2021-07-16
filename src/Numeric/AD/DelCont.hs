@@ -69,17 +69,19 @@ bla x = shiftT $ \k -> do
 -- | demonstration of non-local control flow with a single shift/reset pair
 --
 -- λ> run t1
--- ('b',"b_a")
-t1 :: ContT Char (State [Char]) Char
+-- (2,[2,0,1])
+t1 :: ContT Int (State [Int]) Int
 t1 = resetT $ do
-  let x = 'a' -- input
+  let
+    x = 1 -- input
+    cons w = lift $ modify (w :)
   r <- shiftT $ \k -> do
     cons x -- initial state uses the input
-    let x' = succ x -- compute a function of the input
-    y <- lift $ k x' -- delegate to the continuation k
-    cons y -- mutate state with the return value of k
-    pure x'
-  cons '_'
+    let y = x + 1 -- compute a function of the input
+    z <- lift $ k y -- delegate to the continuation k
+    cons z -- mutate state with the return value of k
+    pure y
+  cons 0
   pure r
 
 
