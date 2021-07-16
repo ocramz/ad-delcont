@@ -13,6 +13,7 @@
 {-# OPTIONS_GHC -Wno-unused-imports #-}
 module Numeric.AD.DelCont where
 
+import Control.Monad ((>=>))
 import Control.Monad.ST (ST, runST)
 import Control.Monad.IO.Class (MonadIO(..))
 import Data.Bifunctor (Bifunctor(..))
@@ -23,13 +24,25 @@ import Data.STRef (STRef, newSTRef, readSTRef, writeSTRef, modifySTRef')
 -- transformers
 import Control.Monad.Trans.Class (MonadTrans(..))
 import Control.Monad.Trans.Cont (Cont, shift, reset, evalCont, ContT(..), shiftT, resetT, evalContT, runContT)
+import Control.Monad.Trans.State (StateT, State, evalState, runState, modify, execStateT, evalStateT, runStateT, put)
 
 import Prelude hiding (read)
 
--- try this to understand what 'shift' and 'reset' do.
+say :: (MonadIO m) => String -> m ()
+say = liftIO . putStrLn
+
+-- | to understand what 'shift' and 'reset' do. :
+--
+-- λ> t0
+-- A
+-- B
+-- C
+-- k : 1
+-- D
+-- k2 : 2
+-- k : 3
 t0 :: IO ()
 t0 = evalContT $ do
-  let say = liftIO . putStrLn
   resetT $ do
     say "A"
     say "B"
@@ -42,6 +55,54 @@ t0 = evalContT $ do
       say $ unwords ["k2 :", show y]
       lift $ k 3
     say $ unwords ["k :", show x]
+
+
+
+bla :: (Enum a, Monad m) => a -> ContT a (StateT [a] m) a
+bla x = shiftT $ \k -> do
+  cons x
+  let x' = succ x -- compute something with the input
+  y <- lift $ k x' -- delegate to the continuation
+  cons y -- mutate state with the return value of k
+  pure x'
+
+-- | how does the composition of two ContT 'shift' computations, bracketed by 'reset', behave?
+--
+-- λ> run t3
+-- ('b',"cczba")
+t3 :: (Monad m) => ContT Char (StateT [Char] m) Char
+t3 = resetT $ do
+  r1 <- bla 'a'
+  r2 <- bla r1
+  cons 'z'
+  pure r2
+
+-- | Like 't3' but with two nested resetT s
+--
+-- λ> run t4
+-- ('b',"czcba")
+t4 :: (Monad m) => ContT Char (StateT [Char] m) Char
+t4 = resetT $ do
+  r1 <- bla 'a'
+  res <- resetT $ do
+    r2 <- bla r1
+    pure r2
+  cons 'z'
+  pure res
+
+
+
+run :: Monad m =>
+       ContT b (StateT [a] m) b
+    -> m (b, [a])
+run go  = flip runStateT [] $ evalContT ( go )
+
+cons :: (MonadTrans t, Monad m) => a -> t (StateT [a] m) ()
+cons x = lift $ modify (x :)
+
+-- -- --
+
+
 
 
 
