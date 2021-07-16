@@ -62,6 +62,11 @@ op1 f ioa = do
     modifySTRef' ra (withD (g yd)) -- 5)
     pure ry
 
+op2 :: Num t =>
+       (a1 -> a2 -> (a3, t -> da1 -> da1, t -> da2 -> da2))
+    -> ContT a4 (ST s) (STRef s (D a1 da1))
+    -> ContT a4 (ST s) (STRef s (D a2 da2))
+    -> ContT a4 (ST s) (DVar s a3 t)
 op2 f ioa iob = do
   ra <- ioa
   rb <- iob
@@ -79,19 +84,18 @@ op2 f ioa iob = do
 plus :: (Num a, Num da) => AD s a da -> AD s a da -> AD s a da
 plus = op2 (\x y -> (x + y, (+), (+)))
 
-op2 :: Num t =>
-       (a1 -> a2 -> (a3, t -> da1 -> da1, t -> da2 -> da2))
-    -> ContT a4 (ST s) (STRef s (D a1 da1))
-    -> ContT a4 (ST s) (STRef s (D a2 da2))
-    -> ContT a4 (ST s) (DVar s a3 t)
+
 instance (Num a, Num da) => Num (AD s a da) where
   (+) = plus
 
+
+-- λ> rad1 (\x -> x + x) 2
+-- 2
 rad1 :: (Num da) =>
         (forall s . AD s a da -> AD s a da) -> a -> da
 rad1 f x = runST $ do
   ioa <- var x
-  evalContT $ do
+  evalContT $
     resetT $ do
       zr <- f (pure ioa)
       lift $ modifySTRef' zr (withD (const 1))
@@ -99,3 +103,18 @@ rad1 f x = runST $ do
   (D _ x_bar) <- readSTRef ioa
   pure x_bar
 
+-- λ> rad2 (\x y -> x + y + y) 1 1
+-- (1,2)
+rad2 :: (Num da) =>
+        (forall s . AD s a da -> AD s a da -> AD s a da) -> a -> a -> (da, da)
+rad2 f x y = runST $ do
+  ioa <- var x
+  iob <- var y
+  evalContT $
+    resetT $ do
+      zr <- f (pure ioa) (pure iob)
+      lift $ modifySTRef' zr (withD (const 1))
+      pure zr
+  (D _ x_bar) <- readSTRef ioa
+  (D _ y_bar) <- readSTRef iob
+  pure (x_bar, y_bar)
