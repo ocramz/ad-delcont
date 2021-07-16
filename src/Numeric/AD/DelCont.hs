@@ -66,6 +66,22 @@ bla x = shiftT $ \k -> do
   cons y -- mutate state with the return value of k
   pure x'
 
+-- | demonstration of non-local control flow with a single shift/reset pair
+--
+-- λ> run t1
+-- ('b',"b_a")
+t1 :: (Monad m) => ContT Char (StateT [Char] m) Char
+t1 = resetT $ do
+  let x = 'a'
+  r <- shiftT $ \k -> do
+    cons x
+    let x' = succ x
+    y <- lift $ k x'
+    cons y
+    pure x'
+  cons '_'
+  pure r
+
 -- | how does the composition of two ContT 'shift' computations, bracketed by 'reset', behave?
 --
 -- λ> run t3
@@ -80,7 +96,7 @@ t3 = resetT $ do
 -- | Like 't3' but with two nested resetT s
 --
 -- λ> run t4
--- ('b',"czcba")
+-- ('b',"_zcba")
 t4 :: (Monad m) => ContT Char (StateT [Char] m) Char
 t4 = resetT $ do
   r1 <- bla 'a'
@@ -88,7 +104,7 @@ t4 = resetT $ do
     r2 <- bla r1
     pure r2
   cons 'z'
-  pure res
+  pure '_'
 
 
 
