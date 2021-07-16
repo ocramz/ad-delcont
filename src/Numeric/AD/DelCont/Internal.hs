@@ -38,8 +38,8 @@ withD = second
 -- differentiable variable
 type DVar s a da = STRef s (D a da)
 -- | Introduce a fresh DVar
-var :: Num da => a -> ST s (DVar s a da)
-var x = newSTRef (D x 0)
+var :: a -> da -> ST s (DVar s a da)
+var x dx = newSTRef (D x dx)
 
 
 type AD s a da = ContT (DVar s a da) (ST s) (DVar s a da)
@@ -56,7 +56,7 @@ op1 f ioa = do
   (D xa _) <- lift $ readSTRef ra
   let (xb, g) = f xa -- 1)
   shiftT $ \ k -> lift $ do
-    rb <- var xb -- 2)
+    rb <- var xb 0 -- 2)
     ry <- k rb -- 3)
     (D _ yd) <- readSTRef rb -- 4)
     modifySTRef' ra (withD (g yd)) -- 5)
@@ -64,8 +64,8 @@ op1 f ioa = do
 
 op2 :: Num t =>
        (a1 -> a2 -> (a3, t -> da1 -> da1, t -> da2 -> da2))
-    -> ContT a4 (ST s) (STRef s (D a1 da1))
-    -> ContT a4 (ST s) (STRef s (D a2 da2))
+    -> ContT a4 (ST s) (DVar s a1 da1)
+    -> ContT a4 (ST s) (DVar s a2 da2)
     -> ContT a4 (ST s) (DVar s a3 t)
 op2 f ioa iob = do
   ra <- ioa
@@ -74,7 +74,7 @@ op2 f ioa iob = do
   (D xb _) <- lift $ readSTRef rb
   let (xc, g, h) = f xa xb
   shiftT $ \ k -> lift $ do
-    rc <- var xc
+    rc <- var xc 0
     ry <- k rc
     (D _ yd) <- readSTRef rc
     modifySTRef' ra (withD (g yd))
@@ -83,10 +83,12 @@ op2 f ioa iob = do
 
 plus :: (Num a, Num da) => AD s a da -> AD s a da -> AD s a da
 plus = op2 (\x y -> (x + y, (+), (+)))
+times :: (Num a) => AD s a a -> AD s a a -> AD s a a
+times = op2 (\x y -> (x * y, (\yd thisd -> thisd + (y * yd)), (\yd thatd -> thatd + (x * yd))))
 
-
-instance (Num a, Num da) => Num (AD s a da) where
+instance (Num a) => Num (AD s a a) where
   (+) = plus
+  (*) = times
 
 
 -- λ> rad1 (\x -> x + x) 2
@@ -94,7 +96,7 @@ instance (Num a, Num da) => Num (AD s a da) where
 rad1 :: (Num da) =>
         (forall s . AD s a da -> AD s a da) -> a -> da
 rad1 f x = runST $ do
-  ioa <- var x
+  ioa <- var x 0
   evalContT $
     resetT $ do
       zr <- f (pure ioa)
@@ -105,11 +107,14 @@ rad1 f x = runST $ do
 
 -- λ> rad2 (\x y -> x + y + y) 1 1
 -- (1,2)
-rad2 :: (Num da) =>
-        (forall s . AD s a da -> AD s a da -> AD s a da) -> a -> a -> (da, da)
+--
+-- λ> rad2 (\x y -> (x + y) * x) 3 2
+-- (8,3)  -- (2x + y, x)
+rad2 :: (Num a) =>
+        (forall s . AD s a a -> AD s a a -> AD s a a) -> a -> a -> (a, a)
 rad2 f x y = runST $ do
-  ioa <- var x
-  iob <- var y
+  ioa <- var x 0
+  iob <- var y 0
   evalContT $
     resetT $ do
       zr <- f (pure ioa) (pure iob)
