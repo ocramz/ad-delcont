@@ -19,6 +19,7 @@ library
   ghc-options:         -Wall
   hs-source-dirs:      src
   exposed-modules:     Numeric.AD.DelCont
+                       Numeric.AD.DelCont.Internal
   build-depends:       base >= 4.7 && < 5
                      , transformers >= 0.5
 

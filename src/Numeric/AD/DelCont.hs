@@ -58,13 +58,7 @@ t0 = evalContT $ do
 
 
 
-bla :: (Enum a) => a -> ContT a (State [a]) a
-bla x = shiftT $ \k -> do
-  cons x
-  let x' = succ x -- compute something with the input
-  y <- lift $ k x' -- delegate to the continuation
-  cons y -- mutate state with the return value of k
-  pure x'
+
 
 -- | demonstration of non-local control flow with a single shift/reset pair
 --
@@ -86,16 +80,24 @@ t1 = resetT $ do
 
 
 
+bla :: (Enum a) => a -> ContT a (State [a]) a
+bla x = shiftT $ \k -> do
+  cons x
+  let x' = succ x -- compute something with the input
+  y <- lift $ k x' -- delegate to the continuation
+  cons y -- mutate state with the return value of k
+  pure x'
+
 -- | how does the composition of two ContT 'shift' computations, bracketed by 'reset', behave?
 --
 -- λ> run t3
--- ('b',"cczba")
+-- ('b',"c_zba")
 t3 :: ContT Char (State [Char]) Char
 t3 = resetT $ do
   r1 <- bla 'a'
-  r2 <- bla r1
+  bla r1
   cons 'z'
-  pure r2
+  pure '_'
 
 -- | Like 't3' but with two nested resetT s
 --
@@ -271,18 +273,18 @@ instance (Num a, Num da) => Num (AD s r a da) where
 --
 -- >>> rad1 (\x -> x + x) 2
 --
--- D 2 0   -- FIXME this should evaluate to (D 4 2)
+-- D 4 1   -- FIXME this should evaluate to (D 4 2)
+--
+-- this doesn't work because it returns the dual component of the output variable, whereas we are interested in that of the 
 rad1 :: (Num da) =>
         (forall s . AD s (DVar s a da) a da -> AD s (DVar s a da) a da) -> a -> D a da
 rad1 f x = runAD $ do
   let ioa = lift $ var x
   resetT $ do
-    let
-      iob = f ioa
-    zr <- iob
+    zr <- f ioa
     lift $ modifySTRef' zr (withD (const 1))
     pure zr
-  ioa
+
 
 
 
