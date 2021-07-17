@@ -8,7 +8,9 @@
 {-# LANGUAGE LambdaCase #-}
 -- {-# LANGUAGE GADTs #-}
 {-# OPTIONS_GHC -Wno-unused-imports #-}
-module Numeric.AD.DelCont.Internal (rad1, rad2, rad1g, rad2g, op1, op2, AD, AD') where
+module Numeric.AD.DelCont.Internal
+  (rad1, rad2, rad1g, rad2g, op1ad, op2ad, op1, op2, AD, AD')
+  where
 
 import Control.Monad ((>=>))
 import Control.Monad.ST (ST, runST)
@@ -34,8 +36,8 @@ instance Ord a => Ord (D a db) where
 instance Bifunctor D where
   bimap f g (D a b) = D (f a) (g b)
 
-withX :: (a -> b) -> D a da -> D b da
-withX = first
+-- withX :: (a -> b) -> D a da -> D b da
+-- withX = first
 withD :: (da -> db) -> D a da -> D a db
 withD = second
 
@@ -48,20 +50,24 @@ var :: a -> da -> ST s (DVar s a da)
 var x dx = newSTRef (D x dx)
 
 
-type AD s a da = ContT (DVar s a da) (ST s) (DVar s a da)
+newtype AD s a da = AD { unAD :: forall x dx . ContT (DVar s x dx) (ST s) (DVar s a da) }
 type AD' s a = AD s a a
 
 -- | Lift a unary operation
 --
 -- HOW DOES THIS WORK :
 --
--- 1) compute function result and adjoint update
+-- 1) compute function result and bind inputs to the adjoint updating function
+--
 -- 2) fresh STRef @rb@ with result and @zero@ adjoint part
+--
 -- 3) rb will be passed downstream by the continuation k, with the expectation that the STRef will be mutated
+--
 -- 4) upon returning from k (bouncing from the boundary of resetT), the mutated STRef is read back in
+--
 -- 5) adjoint part of the input variable is updated and new input variable is returned.
 op1 :: db -- ^ zero
-    -> (a -> (b, db -> da -> da))
+    -> (a -> (b, db -> da -> da)) -- ^ returns : (function result, pullback)
     -> ContT x (ST s) (DVar s a da)
     -> ContT x (ST s) (DVar s b db)
 op1 zero f ioa = do
@@ -75,11 +81,18 @@ op1 zero f ioa = do
     modifySTRef' ra (withD (g yd)) -- 5)
     pure ry
 
+-- | helper to construct Num (AD s a da) instances
+op1ad :: db
+      -> (a -> (b, db -> da -> da)) -- ^ returns : (function result, pullback)
+      -> AD s a da
+      -> AD s b db
+op1ad z f (AD ioa) = AD $ op1 z f ioa
+
 -- | Lift a binary operation
 --
 -- See 'op1' for more info
 op2 :: dc -- ^ zero
-    -> (a -> b -> (c, dc -> da -> da, dc -> db -> db))
+    -> (a -> b -> (c, dc -> da -> da, dc -> db -> db)) -- ^ returns : (function result, pullbacks)
     -> ContT x (ST s) (DVar s a da)
     -> ContT x (ST s) (DVar s b db)
     -> ContT x (ST s) (DVar s c dc)
@@ -97,33 +110,42 @@ op2 zero f ioa iob = do
     modifySTRef' rb (withD (h yd))
     pure ry
 
-plus :: (Num a, Num da) => AD s a da -> AD s a da -> AD s a da
-plus = op2 0 (\x y -> (x + y, (+), (+)))
-times :: (Num a) => AD s a a -> AD s a a -> AD s a a
-times = op2 0 (\x y -> (x * y, (\yd thisd -> thisd + (y * yd)), (\yd thatd -> thatd + (x * yd))))
+-- | helper to construct Num (AD s a da) instances
+op2ad :: dc
+      -> (a -> b -> (c, dc -> da -> da, dc -> db -> db)) -- ^ returns : (function result, pullbacks)
+      -> (AD s a da -> AD s b db -> AD s c dc)
+op2ad z f (AD ioa) (AD iob) = AD $ op2 z f ioa iob
+
+plus :: (Num a, Num da) => AD s a da -> AD s  a da -> AD s  a da
+plus = op2ad 0 (\x y -> (x + y, (+), (+)))
+times :: (Num a) => AD s  a a -> AD s a a -> AD s  a a
+times = op2ad 0 (\x y -> (x * y, (\yd thisd -> thisd + (y * yd)), (\yd thatd -> thatd + (x * yd))))
 fromI :: (Num a, Num da) => Integer -> AD s a da
-fromI x = lift $ var (fromInteger x) 0
+fromI x = AD $ lift $ var (fromInteger x) 0
 
 instance (Num a) => Num (AD s a a) where
   (+) = plus
   (*) = times
   fromInteger = fromI
 
-
 -- | Evaluate (forward mode) and differentiate (reverse mode) a unary function, without committing to a specific numeric typeclass
 rad1g :: da -- ^ zero
       -> db -- ^ one
       -> (forall s . AD s a da -> AD s b db) -> a -> (b, da)
 rad1g zero one f x = runST $ do
-  ioa <- var x zero
+  xr <- var x zero
   zr' <- evalContT $
     resetT $ do
-      zr <- f (pure ioa)
+      let
+        z = f (AD (pure xr))
+      zr <- unAD z
       lift $ modifySTRef' zr (withD (const one))
       pure zr
   (D z _) <- readSTRef zr'
-  (D _ x_bar) <- readSTRef ioa
+  (D _ x_bar) <- readSTRef xr
   pure (z, x_bar)
+
+
 
 -- | Evaluate (forward mode) and differentiate (reverse mode) a binary function, without committing to a specific numeric typeclass
 rad2g :: da -- ^ zero
@@ -131,16 +153,18 @@ rad2g :: da -- ^ zero
       -> dc -- ^ one
       -> (forall s . AD s a da -> AD s b db -> AD s c dc) -> a -> b -> (c, (da, db))
 rad2g zeroa zerob one f x y = runST $ do
-  ioa <- var x zeroa
-  iob <- var y zerob
+  xr <- var x zeroa
+  yr <- var y zerob
   zr' <- evalContT $
     resetT $ do
-      zr <- f (pure ioa) (pure iob)
+      let
+        z = f (AD (pure xr)) (AD (pure yr))
+      zr <- unAD z
       lift $ modifySTRef' zr (withD (const one))
       pure zr
   (D z _) <- readSTRef zr'
-  (D _ x_bar) <- readSTRef ioa
-  (D _ y_bar) <- readSTRef iob
+  (D _ x_bar) <- readSTRef xr
+  (D _ y_bar) <- readSTRef yr
   pure (z, (x_bar, y_bar))
 
 
