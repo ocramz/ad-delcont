@@ -1,10 +1,14 @@
+-- {-# LANGUAGE KindSignatures #-}
+-- {-# LANGUAGE TypeOperators #-}
+-- {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE LambdaCase #-}
+-- {-# LANGUAGE GADTs #-}
 {-# OPTIONS_GHC -Wno-unused-imports #-}
-module Numeric.AD.DelCont.Internal where
+module Numeric.AD.DelCont.Internal (rad1, rad2, rad1g, rad2g, op1, op2, AD, AD') where
 
 import Control.Monad ((>=>))
 import Control.Monad.ST (ST, runST)
@@ -35,7 +39,9 @@ withX = first
 withD :: (da -> db) -> D a da -> D a db
 withD = second
 
--- differentiable variable
+-- | Differentiable variable
+--
+-- A (safely) mutable reference to a dual number
 type DVar s a da = STRef s (D a da)
 -- | Introduce a fresh DVar
 var :: a -> da -> ST s (DVar s a da)
@@ -43,38 +49,48 @@ var x dx = newSTRef (D x dx)
 
 
 type AD s a da = ContT (DVar s a da) (ST s) (DVar s a da)
+type AD' s a = AD s a a
 
-runAD :: (forall s . AD s a da) -> D a da
-runAD go = runST $ runContT go pure >>= readSTRef
-
-op1 :: Num t =>
-       (a1 -> (a2, t -> da -> da))
-    -> ContT x (ST s) (DVar s a1 da)
-    -> ContT x (ST s) (DVar s a2 t)
-op1 f ioa = do
+-- | Lift a unary operation
+--
+-- HOW DOES THIS WORK :
+--
+-- 1) compute function result and adjoint update
+-- 2) fresh STRef @rb@ with result and @zero@ adjoint part
+-- 3) rb will be passed downstream by the continuation k, with the expectation that the STRef will be mutated
+-- 4) upon returning from k (bouncing from the boundary of resetT), the mutated STRef is read back in
+-- 5) adjoint part of the input variable is updated and new input variable is returned.
+op1 :: db -- ^ zero
+    -> (a -> (b, db -> da -> da))
+    -> ContT x (ST s) (DVar s a da)
+    -> ContT x (ST s) (DVar s b db)
+op1 zero f ioa = do
   ra <- ioa
   (D xa _) <- lift $ readSTRef ra
   let (xb, g) = f xa -- 1)
   shiftT $ \ k -> lift $ do
-    rb <- var xb 0 -- 2)
+    rb <- var xb zero -- 2)
     ry <- k rb -- 3)
     (D _ yd) <- readSTRef rb -- 4)
     modifySTRef' ra (withD (g yd)) -- 5)
     pure ry
 
-op2 :: Num t =>
-       (a1 -> a2 -> (a3, t -> da1 -> da1, t -> da2 -> da2))
-    -> ContT a4 (ST s) (DVar s a1 da1)
-    -> ContT a4 (ST s) (DVar s a2 da2)
-    -> ContT a4 (ST s) (DVar s a3 t)
-op2 f ioa iob = do
+-- | Lift a binary operation
+--
+-- See 'op1' for more info
+op2 :: dc -- ^ zero
+    -> (a -> b -> (c, dc -> da -> da, dc -> db -> db))
+    -> ContT x (ST s) (DVar s a da)
+    -> ContT x (ST s) (DVar s b db)
+    -> ContT x (ST s) (DVar s c dc)
+op2 zero f ioa iob = do
   ra <- ioa
   rb <- iob
   (D xa _) <- lift $ readSTRef ra
   (D xb _) <- lift $ readSTRef rb
   let (xc, g, h) = f xa xb
   shiftT $ \ k -> lift $ do
-    rc <- var xc 0
+    rc <- var xc zero
     ry <- k rc
     (D _ yd) <- readSTRef rc
     modifySTRef' ra (withD (g yd))
@@ -82,44 +98,89 @@ op2 f ioa iob = do
     pure ry
 
 plus :: (Num a, Num da) => AD s a da -> AD s a da -> AD s a da
-plus = op2 (\x y -> (x + y, (+), (+)))
+plus = op2 0 (\x y -> (x + y, (+), (+)))
 times :: (Num a) => AD s a a -> AD s a a -> AD s a a
-times = op2 (\x y -> (x * y, (\yd thisd -> thisd + (y * yd)), (\yd thatd -> thatd + (x * yd))))
+times = op2 0 (\x y -> (x * y, (\yd thisd -> thisd + (y * yd)), (\yd thatd -> thatd + (x * yd))))
 
 instance (Num a) => Num (AD s a a) where
   (+) = plus
   (*) = times
 
 
--- λ> rad1 (\x -> x + x) 2
--- 2
-rad1 :: (Num da) =>
-        (forall s . AD s a da -> AD s a da) -> a -> da
-rad1 f x = runST $ do
-  ioa <- var x 0
-  evalContT $
+-- | Evaluate (forward mode) and differentiate (reverse mode) a unary function, without committing to a specific numeric typeclass
+rad1g :: da -- ^ zero
+      -> db -- ^ one
+      -> (forall s . AD s a da -> AD s b db) -> a -> (b, da)
+rad1g zero one f x = runST $ do
+  ioa <- var x zero
+  zr' <- evalContT $
     resetT $ do
       zr <- f (pure ioa)
-      lift $ modifySTRef' zr (withD (const 1))
+      lift $ modifySTRef' zr (withD (const one))
       pure zr
+  (D z _) <- readSTRef zr'
   (D _ x_bar) <- readSTRef ioa
-  pure x_bar
+  pure (z, x_bar)
 
+-- | Evaluate (forward mode) and differentiate (reverse mode) a binary function, without committing to a specific numeric typeclass
+rad2g :: da -- ^ zero
+      -> db -- ^ zero
+      -> dc -- ^ one
+      -> (forall s . AD s a da -> AD s b db -> AD s c dc) -> a -> b -> (c, (da, db))
+rad2g zeroa zerob one f x y = runST $ do
+  ioa <- var x zeroa
+  iob <- var y zerob
+  zr' <- evalContT $
+    resetT $ do
+      zr <- f (pure ioa) (pure iob)
+      lift $ modifySTRef' zr (withD (const one))
+      pure zr
+  (D z _) <- readSTRef zr'
+  (D _ x_bar) <- readSTRef ioa
+  (D _ y_bar) <- readSTRef iob
+  pure (z, (x_bar, y_bar))
+
+
+-- | Evaluate (forward mode) and differentiate (reverse mode) a unary function
+--
+-- λ> rad1 (\x -> x + x) 2
+-- 2
+rad1 :: (Num a, Num b) =>
+        (forall s . AD' s a -> AD' s b) -- ^ function to be differentiated
+     -> a
+     -> (b, a) -- ^ (result, adjoint)
+rad1 = rad1g 0 1
+
+-- | Evaluate (forward mode) and differentiate (reverse mode) a binary function
+--
 -- λ> rad2 (\x y -> x + y + y) 1 1
 -- (1,2)
 --
 -- λ> rad2 (\x y -> (x + y) * x) 3 2
 -- (8,3)  -- (2x + y, x)
-rad2 :: (Num a) =>
-        (forall s . AD s a a -> AD s a a -> AD s a a) -> a -> a -> (a, a)
-rad2 f x y = runST $ do
-  ioa <- var x 0
-  iob <- var y 0
-  evalContT $
-    resetT $ do
-      zr <- f (pure ioa) (pure iob)
-      lift $ modifySTRef' zr (withD (const 1))
-      pure zr
-  (D _ x_bar) <- readSTRef ioa
-  (D _ y_bar) <- readSTRef iob
-  pure (x_bar, y_bar)
+rad2 :: (Num a, Num b, Num c) =>
+        (forall s . AD' s a -> AD' s b -> AD' s c) -- ^ function to be differentiated
+     -> a
+     -> b
+     -> (c, (a, b)) -- ^ (result, adjoints)
+rad2 = rad2g 0 0 1
+
+
+
+
+-- -- playground
+
+-- -- | Dual numbers DD (alternative take, using a type family for the first variation)
+-- data DD a = Dd a (Adj a)
+-- class Diff a where type Adj a :: *
+-- instance Diff Double where type Adj Double = Double
+
+
+-- -- product type (simplified version of vinyl's Rec)
+-- data Rec :: [*] -> * where
+--   RNil :: Rec '[]
+--   (:*) :: !a -> !(Rec as) -> Rec (a ': as)
+
+-- data SDRec s as where
+--   SDNil :: SDRec s '[]
+--   (:&) :: DVar s a a -> !(SDRec s as) -> SDRec s (a ': as)
