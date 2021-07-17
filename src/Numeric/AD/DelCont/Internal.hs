@@ -49,8 +49,11 @@ type DVar s a da = STRef s (D a da)
 var :: a -> da -> ST s (DVar s a da)
 var x dx = newSTRef (D x dx)
 
-
+-- | Mutable references to dual numbers in the continuation monad
+--
+-- Here the @a@ and @da@ type parameters are respectively the /primal/ and /dual/ quantities tracked by the AD computation.
 newtype AD s a da = AD { unAD :: forall x dx . ContT (DVar s x dx) (ST s) (DVar s a da) }
+-- | Like 'AD' but the types of primal and dual coincide
 type AD' s a = AD s a a
 
 -- | Lift a unary operation
@@ -131,7 +134,8 @@ instance (Num a) => Num (AD s a a) where
 -- | Evaluate (forward mode) and differentiate (reverse mode) a unary function, without committing to a specific numeric typeclass
 rad1g :: da -- ^ zero
       -> db -- ^ one
-      -> (forall s . AD s a da -> AD s b db) -> a -> (b, da)
+      -> (forall s . AD s a da -> AD s b db) -> a
+      -> (b, da) -- ^ (result, adjoint)
 rad1g zero one f x = runST $ do
   xr <- var x zero
   zr' <- evalContT $
@@ -151,7 +155,9 @@ rad1g zero one f x = runST $ do
 rad2g :: da -- ^ zero
       -> db -- ^ zero
       -> dc -- ^ one
-      -> (forall s . AD s a da -> AD s b db -> AD s c dc) -> a -> b -> (c, (da, db))
+      -> (forall s . AD s a da -> AD s b db -> AD s c dc)
+      -> a -> b
+      -> (c, (da, db)) -- ^ (result, adjoints)
 rad2g zeroa zerob one f x y = runST $ do
   xr <- var x zeroa
   yr <- var y zerob
