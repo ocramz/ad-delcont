@@ -1,5 +1,17 @@
 {-| Reverse-mode automatic differentiation using delimited continuations
 
+== Quickstart
+
+
+
+== Advanced use
+
+== Implementation
+
+The interface is inspired by that of @ad@ and @backprop@, but the internals are completely different in that here we don't rely on reifying the user function into a Wengert "tape" data structure.
+
+This is the first (known) Haskell implementation of the ideas presented in Wang et al. Here the role of variable mutation and delimited continuations is made explicit by the use of 'ST' and 'ContT'.
+
 == References
 
 * Wang et al, Backpropagation with Continuation Callbacks : Foundations for Efficient and ExpressiveDifferentiable Programming, NeurIPS 2018 - https://papers.nips.cc/paper/2018/file/34e157766f31db3d2099831d348a7933-Paper.pdf

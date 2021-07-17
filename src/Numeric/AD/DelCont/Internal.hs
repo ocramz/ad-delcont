@@ -81,7 +81,7 @@ op1 zero f ioa = do
     modifySTRef' ra (withD (g yd)) -- 5)
     pure ry
 
--- | helper to construct Num (AD s a da) instances
+-- | helper for constructing typeclass (e.g. Num, Semiring) instances
 op1ad :: db
       -> (a -> (b, db -> da -> da)) -- ^ returns : (function result, pullback)
       -> AD s a da
@@ -110,7 +110,7 @@ op2 zero f ioa iob = do
     modifySTRef' rb (withD (h yd))
     pure ry
 
--- | helper to construct Num (AD s a da) instances
+-- | helper for constructing typeclass (e.g. Num, Semiring) instances
 op2ad :: dc
       -> (a -> b -> (c, dc -> da -> da, dc -> db -> db)) -- ^ returns : (function result, pullbacks)
       -> (AD s a da -> AD s b db -> AD s c dc)
