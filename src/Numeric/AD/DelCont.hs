@@ -2,15 +2,32 @@
 
 == Quickstart
 
+Most users will only need to import 'rad1' , 'rad2' and be aware that 'AD' has a 'Num' instance.
 
+Similarly to @ad@, a user codes the function to be differentiated against the Num typeclass, e.g.
+
+@
+f :: Num a => a -> a
+f = \\x -> x + (x * x)
+@
+
+and the library takes care of the rest :
+
+@
+>>> 'rad1' f 1.2
+(2.6399999999999997,3.4000000000000004)
+@
 
 == Advanced use
 
+The library is small and easily extensible. For example, a user might want to supply their own numerical typeclass other than 'Num', and build up a library of 'AD' combinators based on that, by using 'op1' and 'op2'.
+
 == Implementation
 
-The interface is inspired by that of @ad@ and @backprop@, but the internals are completely different in that here we don't rely on reifying the user function into a Wengert "tape" data structure.
+This is the first (known) Haskell implementation of the ideas presented in Wang et al. Here the role of variable mutation and delimited continuations is made explicit by the use of 'ST' and 'ContT', as compared to the reference Scala implementation. 
 
-This is the first (known) Haskell implementation of the ideas presented in Wang et al. Here the role of variable mutation and delimited continuations is made explicit by the use of 'ST' and 'ContT'.
+The interface is inspired by that of @ad@ and @backprop@, however the internals are completely different in that this library doesn't rely on reifying the user function into a Wengert "tape" data structure.
+
 
 == References
 
