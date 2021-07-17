@@ -101,10 +101,13 @@ plus :: (Num a, Num da) => AD s a da -> AD s a da -> AD s a da
 plus = op2 0 (\x y -> (x + y, (+), (+)))
 times :: (Num a) => AD s a a -> AD s a a -> AD s a a
 times = op2 0 (\x y -> (x * y, (\yd thisd -> thisd + (y * yd)), (\yd thatd -> thatd + (x * yd))))
+fromI :: (Num a, Num da) => Integer -> AD s a da
+fromI x = lift $ var (fromInteger x) 0
 
 instance (Num a) => Num (AD s a a) where
   (+) = plus
   (*) = times
+  fromInteger = fromI
 
 
 -- | Evaluate (forward mode) and differentiate (reverse mode) a unary function, without committing to a specific numeric typeclass
@@ -143,8 +146,8 @@ rad2g zeroa zerob one f x y = runST $ do
 
 -- | Evaluate (forward mode) and differentiate (reverse mode) a unary function
 --
--- λ> rad1 (\x -> x + x) 2
--- 2
+-- >>> rad1 (\x -> x * x) 1
+-- (1, 2)
 rad1 :: (Num a, Num b) =>
         (forall s . AD' s a -> AD' s b) -- ^ function to be differentiated
      -> a
@@ -153,11 +156,11 @@ rad1 = rad1g 0 1
 
 -- | Evaluate (forward mode) and differentiate (reverse mode) a binary function
 --
--- λ> rad2 (\x y -> x + y + y) 1 1
+-- >>> rad2 (\x y -> x + y + y) 1 1
 -- (1,2)
 --
--- λ> rad2 (\x y -> (x + y) * x) 3 2
--- (8,3)  -- (2x + y, x)
+-- >>> rad2 (\x y -> (x + y) * x) 3 2
+-- (15,(8,3))
 rad2 :: (Num a, Num b, Num c) =>
         (forall s . AD' s a -> AD' s b -> AD' s c) -- ^ function to be differentiated
      -> a
