@@ -9,7 +9,10 @@
 -- {-# LANGUAGE GADTs #-}
 {-# OPTIONS_GHC -Wno-unused-imports #-}
 module Numeric.AD.DelCont.Internal
-  (rad1, rad2, rad1g, rad2g, op1ad, op2ad, op1, op2, AD, AD')
+  (rad1, rad2,
+   rad1g, rad2g,
+   -- op1ad, op2ad, op1, op2,
+   AD, AD')
   where
 
 import Control.Monad ((>=>))
@@ -70,10 +73,11 @@ type AD' s a = AD s a a
 --
 -- 5) The adjoint part of the input variable is updated using @rb@ and the result of the continuation is returned.
 op1 :: db -- ^ zero
-    -> (a -> (b, db -> da -> da)) -- ^ returns : (function result, pullback)
+    -> (da -> da -> da) -- ^ plus
+    -> (a -> (b, db -> da)) -- ^ returns : (function result, pullback)
     -> ContT x (ST s) (DVar s a da)
     -> ContT x (ST s) (DVar s b db)
-op1 zero f ioa = do
+op1 zero plusa f ioa = do
   ra <- ioa
   (D xa _) <- lift $ readSTRef ra
   let (xb, g) = f xa -- 1)
@@ -81,25 +85,35 @@ op1 zero f ioa = do
     rb <- var xb zero -- 2)
     ry <- k rb -- 3)
     (D _ yd) <- readSTRef rb -- 4)
-    modifySTRef' ra (withD (g yd)) -- 5)
+    modifySTRef' ra (withD (\rda0 -> rda0 `plusa` g yd)) -- 5)
     pure ry
 
 -- | helper for constructing typeclass (e.g. Num, Semiring) instances
 op1ad :: db
-      -> (a -> (b, db -> da -> da)) -- ^ returns : (function result, pullback)
+      -> (da -> da -> da)
+      -> (a -> (b, db -> da)) -- ^ returns : (function result, pullback)
       -> AD s a da
       -> AD s b db
-op1ad z f (AD ioa) = AD $ op1 z f ioa
+op1ad z plusa f (AD ioa) = AD $ op1 z plusa f ioa
+
+-- | helper for constructing Num instances (= op1ad specialized to Num)
+op1Num :: (Num da, Num db) =>
+          (a -> (b, db -> da))
+       -> AD s a da
+       -> AD s b db
+op1Num = op1ad 0 (+)
 
 -- | Lift a binary operation
 --
 -- See 'op1' for more info
 op2 :: dc -- ^ zero
-    -> (a -> b -> (c, dc -> da -> da, dc -> db -> db)) -- ^ returns : (function result, pullbacks)
+    -> (da -> da -> da) -- ^ plus
+    -> (db -> db -> db) -- ^ plus
+    -> (a -> b -> (c, dc -> da, dc -> db)) -- ^ returns : (function result, pullbacks)
     -> ContT x (ST s) (DVar s a da)
     -> ContT x (ST s) (DVar s b db)
     -> ContT x (ST s) (DVar s c dc)
-op2 zero f ioa iob = do
+op2 zero plusa plusb f ioa iob = do
   ra <- ioa
   rb <- iob
   (D xa _) <- lift $ readSTRef ra
@@ -109,28 +123,31 @@ op2 zero f ioa iob = do
     rc <- var xc zero
     ry <- k rc
     (D _ yd) <- readSTRef rc
-    modifySTRef' ra (withD (g yd))
-    modifySTRef' rb (withD (h yd))
+    modifySTRef' ra (withD (\rda0 -> rda0 `plusa` g yd))
+    modifySTRef' rb (withD (\rdb0 -> rdb0 `plusb` h yd))
     pure ry
 
 -- | helper for constructing typeclass (e.g. Num, Semiring) instances
 op2ad :: dc
-      -> (a -> b -> (c, dc -> da -> da, dc -> db -> db)) -- ^ returns : (function result, pullbacks)
+      -> (da -> da -> da)
+      -> (db -> db -> db)
+      -> (a -> b -> (c, dc -> da, dc -> db)) -- ^ returns : (function result, pullbacks)
       -> (AD s a da -> AD s b db -> AD s c dc)
-op2ad z f (AD ioa) (AD iob) = AD $ op2 z f ioa iob
+op2ad z plusa plusb f (AD ioa) (AD iob) = AD $ op2 z plusa plusb f ioa iob
 
-plusAd :: (Num a, Num da) => AD s a da -> AD s a da -> AD s a da
-plusAd = op2ad 0 (\x y -> (x + y, (+), (+)))
-timesAd :: (Num a) => AD s  a a -> AD s a a -> AD s  a a
-timesAd = op2ad 0 (\x y -> (x * y, (\yd thisd -> thisd + (y * yd)), (\yd thatd -> thatd + (x * yd))))
+-- | helper for constructing Num instances (= op2ad specialized to Num)
+op2Num :: (Num da, Num db, Num dc) =>
+          (a -> b -> (c, dc -> da, dc -> db))
+       -> AD s a da
+       -> AD s b db
+       -> AD s c dc
+op2Num = op2ad 0 (+) (+)
 
-fromIAd :: (Num a, Num da) => Integer -> AD s a da
-fromIAd x = AD $ lift $ var (fromInteger x) 0
-
+-- | The Num methods can be read off their @backprop@ counterparts : https://hackage.haskell.org/package/backprop-0.2.6.4/docs/src/Numeric.Backprop.Op.html#%2A.
 instance (Num a) => Num (AD s a a) where
-  (+) = plusAd
-  (*) = timesAd
-  fromInteger = fromIAd
+  (+) = op2Num (\x y -> (x + y, id, id))
+  (*) = op2Num (\x y -> (x*y, (y *), (x *)))
+  fromInteger x = AD $ lift $ var (fromInteger x) 0
 
 -- | Evaluate (forward mode) and differentiate (reverse mode) a unary function, without committing to a specific numeric typeclass
 rad1g :: da -- ^ zero
