@@ -1,8 +1,8 @@
-{-| Reverse-mode automatic differentiation using delimited continuations
+{-| Reverse-mode automatic differentiation using delimited continuations.
 
 == Quickstart
 
-Most users will only need to import 'rad1' , 'rad2' and be aware that 'AD' has a 'Num' instance.
+Most users will only need to import 'rad1', 'rad2' and leverage the 'Num', 'Fractional', 'Floating' instances of the 'AD' type.
 
 Similarly to @ad@, a user supplies a /polymorphic/ function to be differentiated, e.g.
 
@@ -25,7 +25,8 @@ It's important to emphasize that the library cannot differentiate functions of c
 The library is small and easily extensible.
 
 For example, a user might want to supply their own numerical typeclass other than 'Num', and build up a library of 'AD' combinators based on that, specializing 'op1' and 'op2' with custom implementations of @zero@, @one@ and @plus@. This insight first appeared in the user interface of @backprop@, as the Backprop typeclass.
-Keeping 'op1' and 'op2', 'rad1g' and 'rad2g' fully unconstrained opens the door for deeper investigation into adjoints of discrete structures.
+
+Exposing unconstrained AD combinators lets users specialize this library to e.g. exotic number-like types or discrete data structures such as dictionaries, automata etc.
 
 == Implementation details and design choices
 
@@ -33,7 +34,11 @@ This is the first (known) Haskell implementation of the ideas presented in Wang 
 
 @ad-delcont@ relies on non-standard interpretation of the user-provided function; in order to compute the adjoint values (the /sensitivities/) of the function parameters, the function is first evaluated ("forwards"), while keeping track of continuation points, and all the intermediate adjoints are accumulated upon returning from the respective continuations ("backwards") via safe mutation in the ST monad.
 
+As a result of this design, the main 'AD' type cannot be given 'Eq' and 'Ord' instances (since it's unclear how equality and ordering predicates would apply to continuations and state threads).
+
 The user interface is inspired by that of @ad@ and @backprop@, however the internals are completely different in that this library doesn't reify the function to be differentiated into a "tape" data structure.
+
+Another point in common with @backprop@ is that users can differentiate heterogeneous functions: the input and output types can be different. This makes it possible to differentiate functions of statically-typed vectors and matrices.
 
 
 == References
@@ -44,7 +49,7 @@ The user interface is inspired by that of @ad@ and @backprop@, however the inter
 
 * F. Wang et al, Backpropagation with Continuation Callbacks : Foundations for Efficient and Expressive Differentiable Programming, NeurIPS 2018 - https://papers.nips.cc/paper/2018/file/34e157766f31db3d2099831d348a7933-Paper.pdf
 
-* F. Wang et al, Demystifying Differentiable Programming : Shift\/Reset the Penultimate Backpropagator, ICFP 2019 - https://www.cs.purdue.edu/homes/rompf/papers/wang-icfp19.pdf
+* F. Wang et al, Demystifying Differentiable Programming : Shift\/Reset the Penultimate Backpropagator, ICFP 2019 - https://doi.org/10.1145/3341700 - https://www.cs.purdue.edu/homes/rompf/papers/wang-icfp19.pdf
 
 * M. Innes, Don't unroll adjoint: Differentiating SSA-Form Programs  https://arxiv.org/abs/1810.07951
 -}
@@ -53,13 +58,11 @@ module Numeric.AD.DelCont (-- * Quickstart
                           , auto
                           -- * Advanced usage
                           , rad1g, rad2g,
-                            -- ** Lift operators into AD
-                            op1ad, op2ad
+                            -- ** Lift functions into AD
+                            op1, op2
                             -- *** Num instances
-                            -- *** ContT internals
-                          , op1, op2
                           -- * Types
                           , AD, AD') where
 
-import Numeric.AD.DelCont.Internal (rad1, rad2, auto, rad1g, rad2g, op1ad, op2ad, op1, op2, AD, AD')
+import Numeric.AD.DelCont.Internal (rad1, rad2, auto, rad1g, rad2g, op1, op2, AD, AD')
 

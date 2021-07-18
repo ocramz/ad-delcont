@@ -7,7 +7,6 @@ module Numeric.AD.DelCont.Internal
   (rad1, rad2,
    auto,
    rad1g, rad2g,
-   op1ad, op2ad,
    op1Num, op2Num,
    op1, op2,
    AD, AD')
@@ -60,9 +59,11 @@ type AD' s a = AD s a a
 -- runAD :: (forall s . AD s a da) -> D a da
 -- runAD go = runST (evalContT  (unAD go) >>= readSTRef)
 
--- | Lift a unary operation
+-- | Lift a unary function
 --
--- HOW DOES THIS WORK :
+-- This is a polymorphic combinator for tracking how primal and adjoint values are transformed by a function.
+--
+-- How does this work :
 --
 -- 1) Compute the function result and bind the function inputs to the adjoint updating function (the "pullback")
 --
@@ -73,12 +74,12 @@ type AD' s a = AD s a a
 -- 4) Upon returning from the @k@ (bouncing from the boundary of @resetT@), the mutated STRef is read back in
 --
 -- 5) The adjoint part of the input variable is updated using @rb@ and the result of the continuation is returned.
-op1 :: db -- ^ zero
-    -> (da -> da -> da) -- ^ plus
-    -> (a -> (b, db -> da)) -- ^ returns : (function result, pullback)
-    -> ContT x (ST s) (DVar s a da)
-    -> ContT x (ST s) (DVar s b db)
-op1 zero plusa f ioa = do
+op1_ :: db -- ^ zero
+     -> (da -> da -> da) -- ^ plus
+     -> (a -> (b, db -> da)) -- ^ returns : (function result, pullback)
+     -> ContT x (ST s) (DVar s a da)
+     -> ContT x (ST s) (DVar s b db)
+op1_ zero plusa f ioa = do
   ra <- ioa
   (D xa _) <- lift $ readSTRef ra
   let (xb, g) = f xa -- 1)
@@ -89,34 +90,36 @@ op1 zero plusa f ioa = do
     modifySTRef' ra (withD (\rda0 -> rda0 `plusa` g yd)) -- 5)
     pure ry
 
--- | helper for constructing typeclass (e.g. Num, Semiring) instances.
+-- | Lift a unary function
+--
+-- The first two arguments constrain the types of the adjoint values of the output and input variable respectively, see 'op1Num' for an example.
+--
+-- The third argument is the most interesting: it specifies at once how to compute the function value and how to compute the sensitivity with respect to the function parameter.
 --
 -- Note : the type parameters are completely unconstrained.
-op1ad :: db -- ^ zero
-      -> (da -> da -> da) -- ^ plus
-      -> (a -> (b, db -> da)) -- ^ returns : (function result, pullback)
-      -> AD s a da
-      -> AD s b db
-op1ad z plusa f (AD ioa) = AD $ op1 z plusa f ioa
+op1 :: db -- ^ zero
+    -> (da -> da -> da) -- ^ plus
+    -> (a -> (b, db -> da)) -- ^ returns : (function result, pullback)
+    -> AD s a da
+    -> AD s b db
+op1 z plusa f (AD ioa) = AD $ op1_ z plusa f ioa
 
--- | helper for constructing Num instances (= op1ad specialized to Num)
+-- | Helper for constructing Num instances (= 'op1' specialized to Num)
 op1Num :: (Num da, Num db) =>
           (a -> (b, db -> da))
        -> AD s a da
        -> AD s b db
-op1Num = op1ad 0 (+)
+op1Num = op1 0 (+)
 
--- | Lift a binary operation
---
--- See 'op1' for more info
-op2 :: dc -- ^ zero
-    -> (da -> da -> da) -- ^ plus
-    -> (db -> db -> db) -- ^ plus
-    -> (a -> b -> (c, dc -> da, dc -> db)) -- ^ returns : (function result, pullbacks)
-    -> ContT x (ST s) (DVar s a da)
-    -> ContT x (ST s) (DVar s b db)
-    -> ContT x (ST s) (DVar s c dc)
-op2 zero plusa plusb f ioa iob = do
+-- | Lift a binary function
+op2_ :: dc -- ^ zero
+     -> (da -> da -> da) -- ^ plus
+     -> (db -> db -> db) -- ^ plus
+     -> (a -> b -> (c, dc -> da, dc -> db)) -- ^ returns : (function result, pullbacks)
+     -> ContT x (ST s) (DVar s a da)
+     -> ContT x (ST s) (DVar s b db)
+     -> ContT x (ST s) (DVar s c dc)
+op2_ zero plusa plusb f ioa iob = do
   ra <- ioa
   rb <- iob
   (D xa _) <- lift $ readSTRef ra
@@ -130,23 +133,23 @@ op2 zero plusa plusb f ioa iob = do
     modifySTRef' rb (withD (\rdb0 -> rdb0 `plusb` h yd))
     pure ry
 
--- | helper for constructing typeclass (e.g. Num, Semiring) instances
+-- | Lift a binary function
 --
--- Note : the type parameters are completely unconstrained.
-op2ad :: dc -- ^ zero
-      -> (da -> da -> da) -- ^ plus
-      -> (db -> db -> db) -- ^ plus
-      -> (a -> b -> (c, dc -> da, dc -> db)) -- ^ returns : (function result, pullbacks)
-      -> (AD s a da -> AD s b db -> AD s c dc)
-op2ad z plusa plusb f (AD ioa) (AD iob) = AD $ op2 z plusa plusb f ioa iob
+-- See 'op1' for more information.
+op2 :: dc -- ^ zero
+    -> (da -> da -> da) -- ^ plus
+    -> (db -> db -> db) -- ^ plus
+    -> (a -> b -> (c, dc -> da, dc -> db)) -- ^ returns : (function result, pullbacks)
+    -> (AD s a da -> AD s b db -> AD s c dc)
+op2 z plusa plusb f (AD ioa) (AD iob) = AD $ op2_ z plusa plusb f ioa iob
 
--- | helper for constructing Num instances (= op2ad specialized to Num)
+-- | Helper for constructing Num instances (= 'op2' specialized to Num)
 op2Num :: (Num da, Num db, Num dc) =>
           (a -> b -> (c, dc -> da, dc -> db))
        -> AD s a da
        -> AD s b db
        -> AD s c dc
-op2Num = op2ad 0 (+) (+)
+op2Num = op2 0 (+) (+)
 
 -- | The numerical methods of (Num, Fractional, Floating etc.) can be read off their @backprop@ counterparts : https://hackage.haskell.org/package/backprop-0.2.6.4/docs/src/Numeric.Backprop.Op.html#%2A.
 instance (Num a) => Num (AD s a a) where
