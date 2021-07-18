@@ -1,13 +1,8 @@
--- {-# LANGUAGE KindSignatures #-}
--- {-# LANGUAGE TypeOperators #-}
--- {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE LambdaCase #-}
--- {-# LANGUAGE GADTs #-}
-{-# OPTIONS_GHC -Wno-unused-imports #-}
 module Numeric.AD.DelCont.Internal
   (rad1, rad2,
    auto,
@@ -18,18 +13,13 @@ module Numeric.AD.DelCont.Internal
    AD, AD')
   where
 
-import Control.Monad ((>=>))
 import Control.Monad.ST (ST, runST)
-import Control.Monad.IO.Class (MonadIO(..))
 import Data.Bifunctor (Bifunctor(..))
-import Data.Foldable (Foldable(..))
-import Data.Functor (void)
-import Data.STRef (STRef, newSTRef, readSTRef, writeSTRef, modifySTRef')
+import Data.STRef (STRef, newSTRef, readSTRef, modifySTRef')
 
 -- transformers
 import Control.Monad.Trans.Class (MonadTrans(..))
-import Control.Monad.Trans.Cont (Cont, shift, reset, evalCont, ContT(..), shiftT, resetT, evalContT, runContT)
-import Control.Monad.Trans.State (StateT, State, evalState, runState, modify, execStateT, evalStateT, runStateT, put)
+import Control.Monad.Trans.Cont (ContT, shiftT, resetT, evalContT)
 
 import Prelude hiding (read)
 
@@ -42,8 +32,7 @@ instance Ord a => Ord (D a db) where
 instance Bifunctor D where
   bimap f g (D a b) = D (f a) (g b)
 
--- withX :: (a -> b) -> D a da -> D b da
--- withX = first
+-- | Modify the adjoint part of a 'D'
 withD :: (da -> db) -> D a da -> D a db
 withD = second
 
@@ -67,6 +56,9 @@ auto x dx = AD $ lift $ var x dx
 newtype AD s a da = AD { unAD :: forall x dx . ContT (DVar s x dx) (ST s) (DVar s a da) }
 -- | Like 'AD' but the types of primal and dual coincide
 type AD' s a = AD s a a
+
+-- runAD :: (forall s . AD s a da) -> D a da
+-- runAD go = runST (evalContT  (unAD go) >>= readSTRef)
 
 -- | Lift a unary operation
 --
@@ -195,9 +187,8 @@ instance Floating a => Floating (AD s a a) where
   acosh = op1Num $ \x -> (acosh x, (/ sqrt (x*x - 1)))
   atanh = op1Num $ \x -> (atanh x, (/ (1 - x*x)))
 
--- instance Eq (AD s a da) where -- ??
-
--- instance Ord (AD s a da) where -- ???
+-- instance Eq a => Eq (AD s a da) where -- ??? likely impossible
+-- instance Ord (AD s a da) where -- ??? see above
 
 -- | Evaluate (forward mode) and differentiate (reverse mode) a unary function, without committing to a specific numeric typeclass
 rad1g :: da -- ^ zero
