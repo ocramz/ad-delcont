@@ -22,23 +22,31 @@ It's important to emphasize that the library cannot differentiate functions of c
 
 == Advanced usage
 
-The library is small and easily extensible. For example, a user might want to supply their own numerical typeclass other than 'Num', and build up a library of 'AD' combinators based on that, by using 'op1' and 'op2'.
+The library is small and easily extensible.
 
-== Implementation
+For example, a user might want to supply their own numerical typeclass other than 'Num', and build up a library of 'AD' combinators based on that, specializing 'op1' and 'op2' with custom implementations of @zero@, @one@ and @plus@. This insight first appeared in the user interface of @backprop@, as the Backprop typeclass.
+Keeping 'op1' and 'op2', 'rad1g' and 'rad2g' fully unconstrained opens the door for deeper investigation into adjoints of discrete structures.
+
+== Implementation details and design choices
 
 This is the first (known) Haskell implementation of the ideas presented in Wang et al. Here the role of variable mutation and delimited continuations is made explicit by the use of 'ST' and 'ContT', as compared to the reference Scala implementation.
 
-@ad-delcont@ relies on non-standard interpretation of the user-provided function; in order to compute the adjoint values (the /sensitivities/) of the function parameters, the function is first evaluated, while keeping track of continuation points, and all the intermediate adjoints are updated upon returning from the respective continuations via safe mutation in the ST monad.
+@ad-delcont@ relies on non-standard interpretation of the user-provided function; in order to compute the adjoint values (the /sensitivities/) of the function parameters, the function is first evaluated ("forwards"), while keeping track of continuation points, and all the intermediate adjoints are accumulated upon returning from the respective continuations ("backwards") via safe mutation in the ST monad.
 
-The user interface is inspired by that of @ad@ and @backprop@, however the internals are completely different in that this library doesn't rely on reifying the user function into a "tape" data structure.
-
+The user interface is inspired by that of @ad@ and @backprop@, however the internals are completely different in that this library doesn't reify the function to be differentiated into a "tape" data structure.
 
 
 == References
 
-* Wang et al, Backpropagation with Continuation Callbacks : Foundations for Efficient and Expressive Differentiable Programming, NeurIPS 2018 - https://papers.nips.cc/paper/2018/file/34e157766f31db3d2099831d348a7933-Paper.pdf
+* @backprop@ - https://hackage.haskell.org/package/backprop
 
-* Wang et al, Demystifying Differentiable Programming : Shift\/Reset the Penultimate Backpropagator, ICFP 2019 - https://www.cs.purdue.edu/homes/rompf/papers/wang-icfp19.pdf
+* @ad@ - https://hackage.haskell.org/package/ad
+
+* F. Wang et al, Backpropagation with Continuation Callbacks : Foundations for Efficient and Expressive Differentiable Programming, NeurIPS 2018 - https://papers.nips.cc/paper/2018/file/34e157766f31db3d2099831d348a7933-Paper.pdf
+
+* F. Wang et al, Demystifying Differentiable Programming : Shift\/Reset the Penultimate Backpropagator, ICFP 2019 - https://www.cs.purdue.edu/homes/rompf/papers/wang-icfp19.pdf
+
+* M. Innes, Don't unroll adjoint: Differentiating SSA-Form Programs  https://arxiv.org/abs/1810.07951
 -}
 module Numeric.AD.DelCont (-- * Quickstart
                             rad1, rad2
@@ -46,6 +54,7 @@ module Numeric.AD.DelCont (-- * Quickstart
                           , rad1g, rad2g,
                             -- ** Lift operators into AD
                             op1ad, op2ad
+                            -- *** Num instances
                             -- *** ContT internals
                           , op1, op2
                           -- * Types

@@ -11,7 +11,9 @@
 module Numeric.AD.DelCont.Internal
   (rad1, rad2,
    rad1g, rad2g,
-   -- op1ad, op2ad, op1, op2,
+   op1ad, op2ad,
+   op1Num, op2Num,
+   op1, op2,
    AD, AD')
   where
 
@@ -88,9 +90,11 @@ op1 zero plusa f ioa = do
     modifySTRef' ra (withD (\rda0 -> rda0 `plusa` g yd)) -- 5)
     pure ry
 
--- | helper for constructing typeclass (e.g. Num, Semiring) instances
-op1ad :: db
-      -> (da -> da -> da)
+-- | helper for constructing typeclass (e.g. Num, Semiring) instances.
+--
+-- Note : the type parameters are completely unconstrained.
+op1ad :: db -- ^ zero
+      -> (da -> da -> da) -- ^ plus
       -> (a -> (b, db -> da)) -- ^ returns : (function result, pullback)
       -> AD s a da
       -> AD s b db
@@ -128,9 +132,11 @@ op2 zero plusa plusb f ioa iob = do
     pure ry
 
 -- | helper for constructing typeclass (e.g. Num, Semiring) instances
-op2ad :: dc
-      -> (da -> da -> da)
-      -> (db -> db -> db)
+--
+-- Note : the type parameters are completely unconstrained.
+op2ad :: dc -- ^ zero
+      -> (da -> da -> da) -- ^ plus
+      -> (db -> db -> db) -- ^ plus
       -> (a -> b -> (c, dc -> da, dc -> db)) -- ^ returns : (function result, pullbacks)
       -> (AD s a da -> AD s b db -> AD s c dc)
 op2ad z plusa plusb f (AD ioa) (AD iob) = AD $ op2 z plusa plusb f ioa iob
