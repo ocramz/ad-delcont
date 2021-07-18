@@ -10,6 +10,7 @@
 {-# OPTIONS_GHC -Wno-unused-imports #-}
 module Numeric.AD.DelCont.Internal
   (rad1, rad2,
+   auto,
    rad1g, rad2g,
    op1ad, op2ad,
    op1Num, op2Num,
@@ -53,6 +54,10 @@ type DVar s a da = STRef s (D a da)
 -- | Introduce a fresh DVar
 var :: a -> da -> ST s (DVar s a da)
 var x dx = newSTRef (D x dx)
+
+-- | Lift a constant into 'AD'
+auto :: a -> da -> AD s a da
+auto x dx = AD $ lift $ var x dx
 
 -- | Mutable references to dual numbers in the continuation monad
 --
@@ -149,11 +154,44 @@ op2Num :: (Num da, Num db, Num dc) =>
        -> AD s c dc
 op2Num = op2ad 0 (+) (+)
 
--- | The Num methods can be read off their @backprop@ counterparts : https://hackage.haskell.org/package/backprop-0.2.6.4/docs/src/Numeric.Backprop.Op.html#%2A.
+-- | The numerical methods of (Num, Fractional, Floating etc.) can be read off their @backprop@ counterparts : https://hackage.haskell.org/package/backprop-0.2.6.4/docs/src/Numeric.Backprop.Op.html#%2A.
 instance (Num a) => Num (AD s a a) where
-  (+) = op2Num (\x y -> (x + y, id, id))
-  (*) = op2Num (\x y -> (x*y, (y *), (x *)))
-  fromInteger x = AD $ lift $ var (fromInteger x) 0
+  (+) = op2Num $ \x y -> (x + y, id, id)
+  (-) = op2Num $ \x y -> (x - y, id, negate)
+  (*) = op2Num $ \x y -> (x*y, (y *), (x *))
+  fromInteger x = auto (fromInteger x) 0
+  abs = op1Num $ \x -> (abs x, (* signum x))
+  signum = op1Num $ \x -> (signum x, const 0)
+
+instance (Fractional a) => Fractional (AD s a a) where
+  (/) = op2Num $ \x y -> (x / y, (/ y), (\g -> -g*x/(y*y) ))
+  fromRational x = auto (fromRational x) 0
+  recip = op1Num $ \x -> (recip x, (/(x*x)) . negate)
+
+instance Floating a => Floating (AD s a a) where
+  pi = auto pi 0
+  exp = op1Num $ \x -> (exp x, (exp x *))
+  log = op1Num $ \x -> (log x, (/x))
+  sqrt = op1Num $ \x -> (sqrt x, (/ (2 * sqrt x)))
+  logBase = op2Num $ \x y ->
+                       let
+                         dx = - logBase x y / (log x * x)
+                       in ( logBase x y
+                          , ( * dx)
+                          , (/(y * log x))
+                          )
+  sin = op1Num $ \x -> (sin x, (* cos x))
+  cos = op1Num $ \x -> (cos x, (* (-sin x)))
+  tan = op1Num $ \x -> (tan x, (/ cos x^(2::Int)))
+  asin = op1Num $ \x -> (asin x, (/ sqrt(1 - x*x)))
+  acos = op1Num $ \x -> (acos x, (/ sqrt (1 - x*x)) . negate)
+  atan = op1Num $ \x -> (atan x, (/ (x*x + 1)))
+  sinh = op1Num $ \x -> (sinh x, (* cosh x))
+  cosh = op1Num $ \x -> (cosh x, (* sinh x))
+  tanh = op1Num $ \x -> (tanh x, (/ cosh x^(2::Int)))
+  asinh = op1Num $ \x -> (asinh x, (/ sqrt (x*x + 1)))
+  acosh = op1Num $ \x -> (acosh x, (/ sqrt (x*x - 1)))
+  atanh = op1Num $ \x -> (atanh x, (/ (1 - x*x)))
 
 -- | Evaluate (forward mode) and differentiate (reverse mode) a unary function, without committing to a specific numeric typeclass
 rad1g :: da -- ^ zero
