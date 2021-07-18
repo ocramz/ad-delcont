@@ -43,11 +43,12 @@ type DVar s a da = STRef s (D a da)
 var :: a -> da -> ST s (DVar s a da)
 var x dx = newSTRef (D x dx)
 
--- | Lift a constant into 'AD'
-auto :: a -- ^ primal
-     -> da -- ^ adjoint (in most cases this can be set to (@0 :: a@))
-     -> AD s a da
-auto x dx = AD $ lift $ var x dx
+-- | Lift a constant value into 'AD'
+--
+-- As one expects from a constant, its value will be used for computing the result, but it will be discarded when computing the sensitivities.
+auto :: a -> AD s a da
+auto x = AD $ lift $ var x undefined
+
 
 -- | Mutable references to dual numbers in the continuation monad
 --
@@ -104,9 +105,9 @@ op1 :: db -- ^ zero
     -> AD s b db
 op1 z plusa f (AD ioa) = AD $ op1_ z plusa f ioa
 
--- | Helper for constructing Num instances (= 'op1' specialized to Num)
+-- | Helper for constructing unary functions that operate on Num instances (i.e. 'op1' specialized to Num)
 op1Num :: (Num da, Num db) =>
-          (a -> (b, db -> da))
+          (a -> (b, db -> da)) -- ^ returns : (function result, pullback)
        -> AD s a da
        -> AD s b db
 op1Num = op1 0 (+)
@@ -143,9 +144,9 @@ op2 :: dc -- ^ zero
     -> (AD s a da -> AD s b db -> AD s c dc)
 op2 z plusa plusb f (AD ioa) (AD iob) = AD $ op2_ z plusa plusb f ioa iob
 
--- | Helper for constructing Num instances (= 'op2' specialized to Num)
+-- | Helper for constructing binary functions that operate on Num instances (i.e. 'op2' specialized to Num)
 op2Num :: (Num da, Num db, Num dc) =>
-          (a -> b -> (c, dc -> da, dc -> db))
+          (a -> b -> (c, dc -> da, dc -> db)) -- ^ returns : (function result, pullback)
        -> AD s a da
        -> AD s b db
        -> AD s c dc
@@ -156,17 +157,17 @@ instance (Num a) => Num (AD s a a) where
   (+) = op2Num $ \x y -> (x + y, id, id)
   (-) = op2Num $ \x y -> (x - y, id, negate)
   (*) = op2Num $ \x y -> (x*y, (y *), (x *))
-  fromInteger x = auto (fromInteger x) 0
+  fromInteger x = auto (fromInteger x)
   abs = op1Num $ \x -> (abs x, (* signum x))
   signum = op1Num $ \x -> (signum x, const 0)
 
 instance (Fractional a) => Fractional (AD s a a) where
   (/) = op2Num $ \x y -> (x / y, (/ y), (\g -> -g*x/(y*y) ))
-  fromRational x = auto (fromRational x) 0
+  fromRational x = auto (fromRational x)
   recip = op1Num $ \x -> (recip x, (/(x*x)) . negate)
 
 instance Floating a => Floating (AD s a a) where
-  pi = auto pi 0
+  pi = auto pi
   exp = op1Num $ \x -> (exp x, (exp x *))
   log = op1Num $ \x -> (log x, (/x))
   sqrt = op1Num $ \x -> (sqrt x, (/ (2 * sqrt x)))

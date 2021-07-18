@@ -1,6 +1,6 @@
 name:                ad-delcont
-version:             0.1.0.0
-synopsis:            Reverse-mode AD with delimited continuations
+version:             0.2.0.0
+synopsis:            Reverse-mode automatic differentiation with delimited continuations
 description:         Reverse-mode automatic differentiation using delimited continuations (@shift@/@reset@), inspired by the papers
                      .
                      * F. Wang et al, Backpropagation with Continuation Callbacks : Foundations for Efficient and Expressive Differentiable Programming, NeurIPS 2018 - https://papers.nips.cc/paper/2018/file/34e157766f31db3d2099831d348a7933-Paper.pdf
@@ -16,11 +16,13 @@ license-file:        LICENSE
 author:              Marco Zocca
 maintainer:          ocramz
 copyright:           (c) 2021 Marco Zocca
-category:            Math, Numeric, Machine Learning, Optimization, Optimisation, Differentiable Programming
+category:            Math, Numeric, Machine Learning, Optimization, Optimisation
 build-type:          Simple
 extra-source-files:  README.md
 cabal-version:       >=1.10
 tested-with:         GHC == 8.10.4
+extra-source-files:  README.md
+                     Changelog.md
 
 library
   default-language:    Haskell2010

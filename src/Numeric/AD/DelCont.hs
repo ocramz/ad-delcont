@@ -57,12 +57,13 @@ module Numeric.AD.DelCont (-- * Quickstart
                             rad1, rad2
                           , auto
                           -- * Advanced usage
-                          , rad1g, rad2g,
+                          , rad1g, rad2g
                             -- ** Lift functions into AD
-                            op1, op2
+                          , op1, op2
                             -- *** Num instances
+                          , op1Num, op2Num
                           -- * Types
                           , AD, AD') where
 
-import Numeric.AD.DelCont.Internal (rad1, rad2, auto, rad1g, rad2g, op1, op2, AD, AD')
+import Numeric.AD.DelCont.Internal (rad1, rad2, auto, rad1g, rad2g, op1, op2, op1Num, op2Num, AD, AD')
 
