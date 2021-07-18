@@ -56,7 +56,9 @@ var :: a -> da -> ST s (DVar s a da)
 var x dx = newSTRef (D x dx)
 
 -- | Lift a constant into 'AD'
-auto :: a -> da -> AD s a da
+auto :: a -- ^ primal
+     -> da -- ^ adjoint (in most cases this can be set to (@0 :: a@))
+     -> AD s a da
 auto x dx = AD $ lift $ var x dx
 
 -- | Mutable references to dual numbers in the continuation monad
@@ -192,6 +194,10 @@ instance Floating a => Floating (AD s a a) where
   asinh = op1Num $ \x -> (asinh x, (/ sqrt (x*x + 1)))
   acosh = op1Num $ \x -> (acosh x, (/ sqrt (x*x - 1)))
   atanh = op1Num $ \x -> (atanh x, (/ (1 - x*x)))
+
+-- instance Eq (AD s a da) where -- ??
+
+-- instance Ord (AD s a da) where -- ???
 
 -- | Evaluate (forward mode) and differentiate (reverse mode) a unary function, without committing to a specific numeric typeclass
 rad1g :: da -- ^ zero

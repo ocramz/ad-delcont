@@ -50,6 +50,7 @@ The user interface is inspired by that of @ad@ and @backprop@, however the inter
 -}
 module Numeric.AD.DelCont (-- * Quickstart
                             rad1, rad2
+                          , auto
                           -- * Advanced usage
                           , rad1g, rad2g,
                             -- ** Lift operators into AD
@@ -60,5 +61,5 @@ module Numeric.AD.DelCont (-- * Quickstart
                           -- * Types
                           , AD, AD') where
 
-import Numeric.AD.DelCont.Internal (rad1, rad2, rad1g, rad2g, op1ad, op2ad, op1, op2, AD, AD')
+import Numeric.AD.DelCont.Internal (rad1, rad2, auto, rad1g, rad2g, op1ad, op2ad, op1, op2, AD, AD')
 
