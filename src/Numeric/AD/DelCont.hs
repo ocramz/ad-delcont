@@ -4,7 +4,7 @@
 
 Most users will only need to import 'rad1' , 'rad2' and be aware that 'AD' has a 'Num' instance.
 
-Similarly to @ad@, a user codes the function to be differentiated against the Num typeclass, e.g.
+Similarly to @ad@, a user codes the function to be differentiated against the Num typeclass , e.g.
 
 @
 f :: Num a => a -> a
@@ -18,6 +18,8 @@ and the library takes care of the rest :
 (2.6399999999999997,3.4000000000000004)
 @
 
+It's important to emphasize that the library cannot differentiate functions of concrete types, e.t. @Double -> Double@. On the other hand, it's easy to experiment with other numerical interfaces that support one, zero and plus.
+
 == Advanced usage
 
 The library is small and easily extensible. For example, a user might want to supply their own numerical typeclass other than 'Num', and build up a library of 'AD' combinators based on that, by using 'op1' and 'op2'.
@@ -26,7 +28,10 @@ The library is small and easily extensible. For example, a user might want to su
 
 This is the first (known) Haskell implementation of the ideas presented in Wang et al. Here the role of variable mutation and delimited continuations is made explicit by the use of 'ST' and 'ContT', as compared to the reference Scala implementation.
 
+@ad-delcont@ relies on non-standard interpretation of the user-provided function; in order to compute the adjoint values (the 'sensitivities') of the function parameters, the function is first evaluated, while keeping track of continuation points, and all the intermediate adjoints are updated upon returning from the respective continuations via safe mutation in the ST monad.
+
 The interface is inspired by that of @ad@ and @backprop@, however the internals are completely different in that this library doesn't rely on reifying the user function into a Wengert "tape" data structure.
+
 
 
 == References

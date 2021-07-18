@@ -60,15 +60,15 @@ type AD' s a = AD s a a
 --
 -- HOW DOES THIS WORK :
 --
--- 1) compute function result and bind inputs to the adjoint updating function
+-- 1) Compute the function result and bind the function inputs to the adjoint updating function (the "pullback")
 --
--- 2) fresh STRef @rb@ with result and @zero@ adjoint part
+-- 2) Allocate a fresh STRef @rb@ with the function result and @zero@ adjoint part
 --
--- 3) rb will be passed downstream by the continuation k, with the expectation that the STRef will be mutated
+-- 3) @rb@ is passed downstream as an argument to the continuation @k@, with the expectation that the STRef will be mutated
 --
--- 4) upon returning from k (bouncing from the boundary of resetT), the mutated STRef is read back in
+-- 4) Upon returning from the @k@ (bouncing from the boundary of @resetT@), the mutated STRef is read back in
 --
--- 5) adjoint part of the input variable is updated and new input variable is returned.
+-- 5) The adjoint part of the input variable is updated using @rb@ and the result of the continuation is returned.
 op1 :: db -- ^ zero
     -> (a -> (b, db -> da -> da)) -- ^ returns : (function result, pullback)
     -> ContT x (ST s) (DVar s a da)
@@ -119,22 +119,24 @@ op2ad :: dc
       -> (AD s a da -> AD s b db -> AD s c dc)
 op2ad z f (AD ioa) (AD iob) = AD $ op2 z f ioa iob
 
-plus :: (Num a, Num da) => AD s a da -> AD s  a da -> AD s  a da
-plus = op2ad 0 (\x y -> (x + y, (+), (+)))
-times :: (Num a) => AD s  a a -> AD s a a -> AD s  a a
-times = op2ad 0 (\x y -> (x * y, (\yd thisd -> thisd + (y * yd)), (\yd thatd -> thatd + (x * yd))))
-fromI :: (Num a, Num da) => Integer -> AD s a da
-fromI x = AD $ lift $ var (fromInteger x) 0
+plusAd :: (Num a, Num da) => AD s a da -> AD s a da -> AD s a da
+plusAd = op2ad 0 (\x y -> (x + y, (+), (+)))
+timesAd :: (Num a) => AD s  a a -> AD s a a -> AD s  a a
+timesAd = op2ad 0 (\x y -> (x * y, (\yd thisd -> thisd + (y * yd)), (\yd thatd -> thatd + (x * yd))))
+
+fromIAd :: (Num a, Num da) => Integer -> AD s a da
+fromIAd x = AD $ lift $ var (fromInteger x) 0
 
 instance (Num a) => Num (AD s a a) where
-  (+) = plus
-  (*) = times
-  fromInteger = fromI
+  (+) = plusAd
+  (*) = timesAd
+  fromInteger = fromIAd
 
 -- | Evaluate (forward mode) and differentiate (reverse mode) a unary function, without committing to a specific numeric typeclass
 rad1g :: da -- ^ zero
       -> db -- ^ one
-      -> (forall s . AD s a da -> AD s b db) -> a
+      -> (forall s . AD s a da -> AD s b db)
+      -> a -- ^ function argument
       -> (b, da) -- ^ (result, adjoint)
 rad1g zero one f x = runST $ do
   xr <- var x zero
@@ -180,7 +182,7 @@ rad2g zeroa zerob one f x y = runST $ do
 -- (1, 2)
 rad1 :: (Num a, Num b) =>
         (forall s . AD' s a -> AD' s b) -- ^ function to be differentiated
-     -> a
+     -> a -- ^ function argument
      -> (b, a) -- ^ (result, adjoint)
 rad1 = rad1g 0 1
 
