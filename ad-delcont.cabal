@@ -1,5 +1,5 @@
 name:                ad-delcont
-version:             0.2.0.0
+version:             0.3.0.0
 synopsis:            Reverse-mode automatic differentiation with delimited continuations
 description:         Reverse-mode automatic differentiation using delimited continuations (@shift@/@reset@), inspired by the papers
                      .
@@ -10,6 +10,8 @@ description:         Reverse-mode automatic differentiation using delimited cont
                      The package exposes a small and easily extensible user interface to automatic differentiation combinators. It also manages to be very lightweight, as it only depends on @base@ and @transformers@.
                      .
                      To use the library, import "Numeric.AD.DelCont", which also contains all documentation.
+                     .
+                     Blog post : http://ocramz.github.io/haskell/automatic-differentiation/2021/07/19/ad-delcont.html
 homepage:            https://github.com/ocramz/ad-delcont
 license:             BSD3
 license-file:        LICENSE

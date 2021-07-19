@@ -3,6 +3,9 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# language TypeFamilies #-}
+{-# OPTIONS_GHC -Wno-unused-imports -Wno-unused-top-binds #-}
 module Numeric.AD.DelCont.Internal
   (rad1, rad2,
    auto,
@@ -14,6 +17,7 @@ module Numeric.AD.DelCont.Internal
 
 import Control.Monad.ST (ST, runST)
 import Data.Bifunctor (Bifunctor(..))
+import Data.Proxy (Proxy (..))
 import Data.STRef (STRef, newSTRef, readSTRef, modifySTRef')
 
 -- transformers
@@ -80,16 +84,17 @@ op1_ :: db -- ^ zero
      -> (a -> (b, db -> da)) -- ^ returns : (function result, pullback)
      -> ContT x (ST s) (DVar s a da)
      -> ContT x (ST s) (DVar s b db)
-op1_ zero plusa f ioa = do
+op1_ zeroa plusa f ioa = do
   ra <- ioa
   (D xa _) <- lift $ readSTRef ra
   let (xb, g) = f xa -- 1)
   shiftT $ \ k -> lift $ do
-    rb <- var xb zero -- 2)
+    rb <- var xb zeroa -- 2)
     ry <- k rb -- 3)
     (D _ yd) <- readSTRef rb -- 4)
     modifySTRef' ra (withD (\rda0 -> rda0 `plusa` g yd)) -- 5)
     pure ry
+
 
 -- | Lift a unary function
 --
@@ -120,14 +125,14 @@ op2_ :: dc -- ^ zero
      -> ContT x (ST s) (DVar s a da)
      -> ContT x (ST s) (DVar s b db)
      -> ContT x (ST s) (DVar s c dc)
-op2_ zero plusa plusb f ioa iob = do
+op2_ zeroa plusa plusb f ioa iob = do
   ra <- ioa
   rb <- iob
   (D xa _) <- lift $ readSTRef ra
   (D xb _) <- lift $ readSTRef rb
   let (xc, g, h) = f xa xb
   shiftT $ \ k -> lift $ do
-    rc <- var xc zero
+    rc <- var xc zeroa
     ry <- k rc
     (D _ yd) <- readSTRef rc
     modifySTRef' ra (withD (\rda0 -> rda0 `plusa` g yd))
@@ -194,20 +199,22 @@ instance Floating a => Floating (AD s a a) where
 -- instance Eq a => Eq (AD s a da) where -- ??? likely impossible
 -- instance Ord (AD s a da) where -- ??? see above
 
+
+
 -- | Evaluate (forward mode) and differentiate (reverse mode) a unary function, without committing to a specific numeric typeclass
 rad1g :: da -- ^ zero
       -> db -- ^ one
       -> (forall s . AD s a da -> AD s b db)
       -> a -- ^ function argument
       -> (b, da) -- ^ (result, adjoint)
-rad1g zero one f x = runST $ do
-  xr <- var x zero
+rad1g zeroa oneb f x = runST $ do
+  xr <- var x zeroa
   zr' <- evalContT $
     resetT $ do
       let
         z = f (AD (pure xr))
       zr <- unAD z
-      lift $ modifySTRef' zr (withD (const one))
+      lift $ modifySTRef' zr (withD (const oneb))
       pure zr
   (D z _) <- readSTRef zr'
   (D _ x_bar) <- readSTRef xr
@@ -222,7 +229,7 @@ rad2g :: da -- ^ zero
       -> (forall s . AD s a da -> AD s b db -> AD s c dc)
       -> a -> b
       -> (c, (da, db)) -- ^ (result, adjoints)
-rad2g zeroa zerob one f x y = runST $ do
+rad2g zeroa zerob onec f x y = runST $ do
   xr <- var x zeroa
   yr <- var y zerob
   zr' <- evalContT $
@@ -230,7 +237,7 @@ rad2g zeroa zerob one f x y = runST $ do
       let
         z = f (AD (pure xr)) (AD (pure yr))
       zr <- unAD z
-      lift $ modifySTRef' zr (withD (const one))
+      lift $ modifySTRef' zr (withD (const onec))
       pure zr
   (D z _) <- readSTRef zr'
   (D _ x_bar) <- readSTRef xr
@@ -264,8 +271,89 @@ rad2 = rad2g 0 0 1
 
 
 
+-- ======================== EXPERIMENTAL ==========================
+
+data Backprop a da = Backprop {
+  zero :: a -> da
+  , one :: da -> da
+  , add :: da -> da -> da
+                              }
+
+bpNum :: (Num a, Num da) => Backprop a da
+bpNum = Backprop zeroNum oneNum addNum
+
+-- | backprop typeclass, adapted from https://hackage.haskell.org/package/backprop-0.2.6.4/docs/src/Numeric.Backprop.Class.html
+--
+-- we use two type parameters to keep the distinction between primal and dual variables
+
+-- class Backprop a da where
+--   zero :: a -> da
+--   one :: proxy a -> da -> da
+--   add :: proxy a -> da -> da -> da
+
+-- | 'zero' for instances of 'Num'. lazy in its argument.
+zeroNum :: Num da => a -> da
+zeroNum _ = 0
+{-# INLINE zeroNum #-}
+
+-- | 'add' for instances of 'Num'.
+addNum :: Num da => da -> da -> da
+addNum = (+)
+{-# INLINE addNum #-}
+
+-- | 'one' for instances of 'Num'. lazy in its argument.
+oneNum :: Num da => a -> da
+oneNum _ = 1
+{-# INLINE oneNum #-}
+
+
+rad1BP :: Backprop a da
+       -> Backprop b db
+       -> (forall s . AD s a da -> AD s b db)
+       -> a -- ^ function argument
+       -> (b, da) -- ^ (result, adjoint)
+rad1BP bpa bpb f x = runST $ do
+  xr <- var x (zero bpa x)
+  zr' <- evalContT $
+    resetT $ do
+      let
+        z = f (AD (pure xr))
+      zr <- unAD z
+      lift $ modifySTRef' zr (withD $ one bpb)
+      pure zr
+  (D z _) <- readSTRef zr'
+  (D _ x_bar) <- readSTRef xr
+  pure (z, x_bar)
+
+-- rad1BP :: (Backprop a da, Backprop b db)
+--        => (forall s . AD s a da -> AD s b db)
+--        -> a -- ^ function argument
+--        -> (b, da) -- ^ (result, adjoint)
+-- rad1BP f x = runST $ do
+--   xr <- var x (zero x)
+--   zr' <- evalContT $
+--     resetT $ do
+--       let
+--         z = f (AD (pure xr))
+--       zr <- unAD z
+--       let
+--         oneB :: forall b db . Backprop b db => db -> db -> db
+--         oneB = one (Proxy :: Proxy db)
+--       lift $ modifySTRef' zr (withD oneB)
+--       pure zr
+--   (D z _) <- readSTRef zr'
+--   (D _ x_bar) <- readSTRef xr
+--   pure (z, x_bar)
+
+
+
+
 
 -- -- playground
+
+-- -- dual pairing 
+-- class Dual a where
+--   dual :: Num r => a -> (a -> r)
 
 -- -- | Dual numbers DD (alternative take, using a type family for the first variation)
 -- data DD a = Dd a (Adj a)
