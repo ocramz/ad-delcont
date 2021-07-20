@@ -36,7 +36,7 @@ p = [4.1, 2]
 @
 
 @
->>> grad sqNorm p
+>>> 'grad' sqNorm p
 (20.81,[8.2,4.0])
 @
 
