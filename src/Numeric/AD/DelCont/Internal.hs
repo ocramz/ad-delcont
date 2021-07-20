@@ -26,6 +26,7 @@ import Control.Monad.Trans.Cont (ContT, shiftT, resetT, evalContT)
 
 import Prelude hiding (read)
 
+
 -- | Dual numbers
 data D a da = D a da deriving (Show, Functor)
 instance Eq a => Eq (D a da) where
@@ -57,7 +58,9 @@ auto x = AD $ lift $ var x undefined
 -- | Mutable references to dual numbers in the continuation monad
 --
 -- Here the @a@ and @da@ type parameters are respectively the /primal/ and /dual/ quantities tracked by the AD computation.
-newtype AD s a da = AD { unAD :: forall x dx . ContT (DVar s x dx) (ST s) (DVar s a da) }
+--
+-- The current implementation relies on 'forall x . ContT x ...', which is elsewhere called Codensity. Not sure of the implications of this
+newtype AD s a da = AD { unAD :: forall x . ContT x (ST s) (DVar s a da) }
 -- | Like 'AD' but the types of primal and dual coincide
 type AD' s a = AD s a a
 
