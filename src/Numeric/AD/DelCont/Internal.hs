@@ -1,23 +1,22 @@
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE DeriveFunctor #-}
+{-# language GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# language TypeFamilies #-}
+-- {-# LANGUAGE MultiParamTypeClasses #-}
+-- {-# language TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-unused-imports -Wno-unused-top-binds #-}
 module Numeric.AD.DelCont.Internal
-  (rad1, rad2,
+  (rad1, rad2, grad,
    auto,
-   rad1g, rad2g,
+   rad1g, rad2g, radNg,
    op1Num, op2Num,
    op1, op2,
-   AD, AD')
+   AD0, AD, AD')
   where
 
 import Control.Monad.ST (ST, runST)
 import Data.Bifunctor (Bifunctor(..))
-import Data.Proxy (Proxy (..))
 import Data.STRef (STRef, newSTRef, readSTRef, modifySTRef')
 
 -- transformers
@@ -28,7 +27,7 @@ import Prelude hiding (read)
 
 
 -- | Dual numbers
-data D a da = D a da deriving (Show, Functor)
+data D a da = D { primal :: a, dual :: da } deriving (Show, Functor)
 instance Eq a => Eq (D a da) where
   D x _ == D y _ = x == y
 instance Ord a => Ord (D a db) where
@@ -52,20 +51,24 @@ var x dx = newSTRef (D x dx)
 --
 -- As one expects from a constant, its value will be used for computing the result, but it will be discarded when computing the sensitivities.
 auto :: a -> AD s a da
-auto x = AD $ lift $ var x undefined
+auto x = AD0 $ lift $ var x undefined
 
 
--- | Mutable references to dual numbers in the continuation monad
+-- | Mutable references in the continuation monad
+newtype AD0 s a = AD0 { unAD0 :: forall x . ContT x (ST s) a } deriving (Functor)
+instance Applicative (AD0 s) where
+  AD0 f <*> AD0 x = AD0 (f <*> x)
+  pure x = AD0 $ pure x
+-- instance Monad (AD s) where -- TODO
+
+-- | A synonym of 'AD0' for the common case of returning a 'DVar' (which is a 'ST' computation that returns a dual number)
 --
 -- Here the @a@ and @da@ type parameters are respectively the /primal/ and /dual/ quantities tracked by the AD computation.
---
--- The current implementation relies on 'forall x . ContT x ...', which is elsewhere called Codensity. Not sure of the implications of this
-newtype AD s a da = AD { unAD :: forall x . ContT x (ST s) (DVar s a da) }
+type AD s a da = AD0 s (DVar s a da)
 -- | Like 'AD' but the types of primal and dual coincide
 type AD' s a = AD s a a
 
--- runAD :: (forall s . AD s a da) -> D a da
--- runAD go = runST (evalContT  (unAD go) >>= readSTRef)
+
 
 -- | Lift a unary function
 --
@@ -111,7 +114,7 @@ op1 :: db -- ^ zero
     -> (a -> (b, db -> da)) -- ^ returns : (function result, pullback)
     -> AD s a da
     -> AD s b db
-op1 z plusa f (AD ioa) = AD $ op1_ z plusa f ioa
+op1 z plusa f (AD0 ioa) = AD0 $ op1_ z plusa f ioa
 
 -- | Helper for constructing unary functions that operate on Num instances (i.e. 'op1' specialized to Num)
 op1Num :: (Num da, Num db) =>
@@ -150,7 +153,7 @@ op2 :: dc -- ^ zero
     -> (db -> db -> db) -- ^ plus
     -> (a -> b -> (c, dc -> da, dc -> db)) -- ^ returns : (function result, pullbacks)
     -> (AD s a da -> AD s b db -> AD s c dc)
-op2 z plusa plusb f (AD ioa) (AD iob) = AD $ op2_ z plusa plusb f ioa iob
+op2 z plusa plusb f (AD0 ioa) (AD0 iob) = AD0 $ op2_ z plusa plusb f ioa iob
 
 -- | Helper for constructing binary functions that operate on Num instances (i.e. 'op2' specialized to Num)
 op2Num :: (Num da, Num db, Num dc) =>
@@ -199,8 +202,8 @@ instance Floating a => Floating (AD s a a) where
   acosh = op1Num $ \x -> (acosh x, (/ sqrt (x*x - 1)))
   atanh = op1Num $ \x -> (atanh x, (/ (1 - x*x)))
 
--- instance Eq a => Eq (AD s a da) where -- ??? likely impossible
--- instance Ord (AD s a da) where -- ??? see above
+-- -- instance Eq a => Eq (AD s a da) where -- ??? likely impossible
+-- -- instance Ord (AD s a da) where -- ??? see above
 
 
 
@@ -215,8 +218,8 @@ rad1g zeroa oneb f x = runST $ do
   zr' <- evalContT $
     resetT $ do
       let
-        z = f (AD (pure xr))
-      zr <- unAD z
+        z = f (AD0 (pure xr))
+      zr <- unAD0 z
       lift $ modifySTRef' zr (withD (const oneb))
       pure zr
   (D z _) <- readSTRef zr'
@@ -238,14 +241,37 @@ rad2g zeroa zerob onec f x y = runST $ do
   zr' <- evalContT $
     resetT $ do
       let
-        z = f (AD (pure xr)) (AD (pure yr))
-      zr <- unAD z
+        z = f (AD0 (pure xr)) (AD0 (pure yr))
+      zr <- unAD0 z
       lift $ modifySTRef' zr (withD (const onec))
       pure zr
   (D z _) <- readSTRef zr'
   (D _ x_bar) <- readSTRef xr
   (D _ y_bar) <- readSTRef yr
   pure (z, (x_bar, y_bar))
+
+-- | Evaluate (forward mode) and differentiate (reverse mode) a function of a 'Traversable'
+--
+-- In linear algebra terms, this computes the gradient of a scalar function of vector argument
+radNg :: Traversable t =>
+         da -- ^ zero
+      -> db -- ^ one
+      -> (forall s . t (AD s a da) -> AD s b db)
+      -> t a -- ^ argument vector
+      -> (b, t da) -- ^ (result, gradient vector)
+radNg zeroa onea f xs = runST $ do
+  xrs <- traverse (`var` zeroa) xs
+  zr' <- evalContT $
+    resetT $ do
+      let
+        (AD0 z) = f (fmap pure xrs)
+      zr <- z
+      lift $ modifySTRef' zr (withD (const onea))
+      pure zr
+  (D z _) <- readSTRef zr'
+  xs_bar <- traverse readSTRef xrs
+  let xs_bar_d = dual <$> xs_bar
+  pure (z, xs_bar_d)
 
 
 -- | Evaluate (forward mode) and differentiate (reverse mode) a unary function
@@ -272,6 +298,26 @@ rad2 :: (Num a, Num b, Num c) =>
      -> (c, (a, b)) -- ^ (result, adjoints)
 rad2 = rad2g 0 0 1
 
+-- | Evaluate (forward mode) and differentiate (reverse mode) a function of a 'Traversable'
+--
+-- In linear algebra terms, this computes the gradient of a scalar function of vector argument
+--
+--
+-- @
+-- sqNorm :: Num a => [a] -> a
+-- sqNorm xs = sum $ zipWith (*) xs xs
+--
+-- p :: [Double]
+-- p = [4.1, 2]
+-- @
+--
+-- >>> grad sqNorm p
+-- (20.81,[8.2,4.0])
+grad :: (Traversable t, Num a, Num b) =>
+        (forall s . t (AD' s a) -> AD' s b)
+     -> t a -- ^ argument vector
+     -> (b, t a) -- ^ (result, gradient vector)
+grad = radNg 0 1
 
 
 -- ======================== EXPERIMENTAL ==========================
@@ -310,49 +356,56 @@ oneNum _ = 1
 {-# INLINE oneNum #-}
 
 
-rad1BP :: Backprop a da
-       -> Backprop b db
-       -> (forall s . AD s a da -> AD s b db)
-       -> a -- ^ function argument
-       -> (b, da) -- ^ (result, adjoint)
-rad1BP bpa bpb f x = runST $ do
-  xr <- var x (zero bpa x)
-  zr' <- evalContT $
-    resetT $ do
-      let
-        z = f (AD (pure xr))
-      zr <- unAD z
-      lift $ modifySTRef' zr (withD $ one bpb)
-      pure zr
-  (D z _) <- readSTRef zr'
-  (D _ x_bar) <- readSTRef xr
-  pure (z, x_bar)
-
--- rad1BP :: (Backprop a da, Backprop b db)
---        => (forall s . AD s a da -> AD s b db)
+-- rad1BP :: Backprop a da
+--        -> Backprop b db
+--        -> (forall s . AD s a da -> AD s b db)
 --        -> a -- ^ function argument
 --        -> (b, da) -- ^ (result, adjoint)
--- rad1BP f x = runST $ do
---   xr <- var x (zero x)
+-- rad1BP bpa bpb f x = runST $ do
+--   xr <- var x (zero bpa x)
 --   zr' <- evalContT $
 --     resetT $ do
 --       let
 --         z = f (AD (pure xr))
 --       zr <- unAD z
---       let
---         oneB :: forall b db . Backprop b db => db -> db -> db
---         oneB = one (Proxy :: Proxy db)
---       lift $ modifySTRef' zr (withD oneB)
+--       lift $ modifySTRef' zr (withD $ one bpb)
 --       pure zr
 --   (D z _) <- readSTRef zr'
 --   (D _ x_bar) <- readSTRef xr
 --   pure (z, x_bar)
+
+-- -- rad1BP :: (Backprop a da, Backprop b db)
+-- --        => (forall s . AD s a da -> AD s b db)
+-- --        -> a -- ^ function argument
+-- --        -> (b, da) -- ^ (result, adjoint)
+-- -- rad1BP f x = runST $ do
+-- --   xr <- var x (zero x)
+-- --   zr' <- evalContT $
+-- --     resetT $ do
+-- --       let
+-- --         z = f (AD (pure xr))
+-- --       zr <- unAD z
+-- --       let
+-- --         oneB :: forall b db . Backprop b db => db -> db -> db
+-- --         oneB = one (Proxy :: Proxy db)
+-- --       lift $ modifySTRef' zr (withD oneB)
+-- --       pure zr
+-- --   (D z _) <- readSTRef zr'
+-- --   (D _ x_bar) <- readSTRef xr
+-- --   pure (z, x_bar)
 
 
 
 
 
 -- -- playground
+
+
+
+-- -- product type (simplified version of vinyl's Rec)
+-- data Rec :: [*] -> * where
+--   RNil :: Rec '[]
+--   (:*) :: !a -> !(Rec as) -> Rec (a ': as)
 
 -- -- dual pairing 
 -- class Dual a where
@@ -364,10 +417,7 @@ rad1BP bpa bpb f x = runST $ do
 -- instance Diff Double where type Adj Double = Double
 
 
--- -- product type (simplified version of vinyl's Rec)
--- data Rec :: [*] -> * where
---   RNil :: Rec '[]
---   (:*) :: !a -> !(Rec as) -> Rec (a ': as)
+
 
 -- data SDRec s as where
 --   SDNil :: SDRec s '[]
