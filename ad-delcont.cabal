@@ -37,9 +37,9 @@ library
   other-modules:       Numeric.AD.DelCont.Internal
   build-depends:       base >= 4.7 && < 5
                      , transformers >= 0.5
-                     -- DEBUG
-                     , ad 
-                     , hspec >= 2.7.10
+                     -- -- DEBUG
+                     -- , ad 
+                     -- , hspec >= 2.7.10
 
 -- TODO
 test-suite spec
@@ -49,9 +49,10 @@ test-suite spec
   hs-source-dirs:      test
   main-is:             Spec.hs
   build-depends:       base
-                     , ad
                      , ad-delcont
                      , hspec
+                     --
+                     , ad
 
 source-repository head
   type:     git
