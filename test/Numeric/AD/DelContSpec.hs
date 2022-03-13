@@ -2,7 +2,7 @@
 module Numeric.AD.DelContSpec where
 
 import Numeric.AD.DelCont (grad, rad1)
--- import qualified Numeric.AD as AD (grad)
+import qualified Numeric.AD as AD (grad)
 import Test.Hspec (Spec, hspec, describe, it, shouldBe, shouldSatisfy)
 
 
@@ -26,15 +26,15 @@ spec = do
         (_, dfdx) = rad1 recip x0
         xhat = negate $ 1 / (x0 **2)
       dfdx `shouldBe` xhat
-  -- describe "grad : Multivariate functions" $ do
-  --   let
-  --     x = [1.2, 1.3]
-  --   it "inverse square law" $ do
-  --     let
-  --       f z = 1 / norm z
-  --       (_, gradf) = grad f x
-  --       gradAD = AD.grad f x
-  --     norm (gradf - gradAD) `shouldSatisfy` (<= 1e-12)
+  describe "grad : Multivariate functions" $ do
+    let
+      x = [1.2, 1.3]
+    it "inverse of the L2 norm" $ do
+      let
+        f z = 1 / norm z
+        (_, gradf) = grad f x -- 'ad-delcont'
+        gradAD = AD.grad f x -- 'ad'
+      norm (gradf - gradAD) `shouldSatisfy` (<= 1e-12)
 
 instance Num a => Num [a] where
   (-) = zipWith (-)
