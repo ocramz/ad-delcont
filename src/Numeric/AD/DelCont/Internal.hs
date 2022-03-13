@@ -3,8 +3,6 @@
 {-# LANGUAGE DeriveFunctor #-}
 {-# language GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
--- {-# LANGUAGE MultiParamTypeClasses #-}
--- {-# language TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-unused-imports -Wno-unused-top-binds #-}
 module Numeric.AD.DelCont.Internal
   (rad1, rad2, grad,
@@ -24,7 +22,6 @@ import Control.Monad.Trans.Class (MonadTrans(..))
 import Control.Monad.Trans.Cont (ContT, shiftT, resetT, evalContT)
 
 import Prelude hiding (read)
-
 
 -- | Dual numbers
 data D a da = D { primal :: a, dual :: da } deriving (Show, Functor)
@@ -51,8 +48,9 @@ var x dx = newSTRef (D x dx)
 --
 -- As one expects from a constant, its value will be used for computing the result, but it will be discarded when computing the sensitivities.
 auto :: a -> AD s a da
-auto x = AD0 $ lift $ var x undefined
-
+auto x = AD0 $ lift $ var x undefined -- NB blows up with -XStrict
+autoStrict :: a -> da -> AD0 s (DVar s a da)
+autoStrict x dx = AD0 $ lift $ var x dx
 
 -- | Mutable references in the continuation monad
 newtype AD0 s a = AD0 { unAD0 :: forall x . ContT x (ST s) a } deriving (Functor)
@@ -272,6 +270,22 @@ radNg zeroa onea f xs = runST $ do
   xs_bar <- traverse readSTRef xrs
   let xs_bar_d = dual <$> xs_bar
   pure (z, xs_bar_d)
+
+
+-- jacg zeroa onea f xs = runST $ do -- -- Jacobian TODO
+--   xrs <- traverse (`var` zeroa) xs
+--   zr' <- evalContT $
+--     resetT $ do
+--       let
+--         zads = f (fmap pure xrs) -- traversable of AD results
+--       for zads $ \zad -> do
+--         zr <- zad
+--         lift $ modifySTRef' zr (withD (const onea))
+--         pure zr
+--   undefined
+
+for :: (Applicative f, Traversable t) => t a -> (a -> f b) -> f (t b)
+for = flip traverse
 
 
 -- | Evaluate (forward mode) and differentiate (reverse mode) a unary function

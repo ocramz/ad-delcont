@@ -1,3 +1,7 @@
+0.4
+
+* add unit tests
+
 0.3
 
 * add `grad`
