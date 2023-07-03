@@ -1,3 +1,7 @@
+0.5
+
+* add explicit (**) implementation for AD (@msakai https://github.com/ocramz/ad-delcont/pull/4 )
+
 0.4
 
 * add unit tests
