@@ -11,11 +11,14 @@ spec = do
   describe "rad1 : Unary functions" $ do
     let
       x0 = 1.2
+      x1 = 0.0
     it "(** 2)" $ do
       let
         f x = x ** 2
         (_, dfdx) = rad1 f x0
+        (_, dfdx1) = rad1 f x1
       dfdx `shouldBe` 2.4
+      dfdx1 `shouldBe` 0.0
     it "sqrt" $ do
       let
         (_, dfdx) = rad1 sqrt x0
