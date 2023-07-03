@@ -180,6 +180,7 @@ instance Floating a => Floating (AD s a a) where
   exp = op1Num $ \x -> (exp x, (exp x *))
   log = op1Num $ \x -> (log x, (/x))
   sqrt = op1Num $ \x -> (sqrt x, (/ (2 * sqrt x)))
+  (**) = op2Num $ \x y -> (x ** y, (* (y * x ** (y - 1))), (* (x ** y * log x)))
   logBase = op2Num $ \x y ->
                        let
                          dx = - logBase x y / (log x * x)
